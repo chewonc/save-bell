@@ -17,7 +17,7 @@ Threat published → Report fact-checked → Relevant repos found → Code inves
 3. **Investigate your code.** Lockfile versions are checked against affected ranges in code. Muse Spark explores the repository with read-only tools (list, search, read) to find the code that decides each condition, then judges each condition with file:line citations. Every citation is re-read from the real file; unverifiable, prose-only or comment-only evidence is downgraded. The verdict (Affected / Not Affected / Unclear) comes from a fixed rule, never from the model.
 4. **Notify.** In-app notifications with unread badge, priority order (unread, confirmed, severity, time), one entry per finding and repository updated in place, Slack/Discord webhook, Web Push when VAPID keys are set.
 5. **Show the impact.** "What happens if you don't fix this?" builds a short, hypothetical walkthrough of what a user of *your* app could experience, as screens of your app. Each step says whether it is shown in your code, inferred, or hypothetical; synthetic data only; nothing is executed.
-6. **Fix.** A preview diff with a static remediation assessment, then **Fix & create PR** (recommended) or **Fix & push**: Meta Muse Code edits a fresh clone inside an isolated GitHub Actions runner and the runner runs the repository's tests there; only after you approve that exact patch does SaveBell open a pull request (or, in push mode, merge it after the repository's own checks pass and branch protection allows). Fix & create PR has run on production (draft PR chewonc/argus-demo-api#2); Fix & push has not run yet. See Status. Or connect your own MCP-capable coding agent.
+6. **Fix.** A preview diff with a static remediation assessment, then **Fix & create PR** (recommended) or **Fix & push**: a runner in **your own GitHub Actions** makes the edit (by rules, or by your own model or coding agent if you set one up) and runs the repository's tests there; only after you approve that exact patch does SaveBell open a pull request (or, in push mode, merge it after the repository's own checks pass and branch protection allows). The runner in your own Actions has not yet run end to end on a real repository; the earlier hackathon runner did (draft PR chewonc/argus-demo-api#2). Or connect your own MCP-capable coding agent.
 
 ## How analysis works now (no AI on the server)
 
@@ -28,7 +28,7 @@ Since November 18, 2026 the SaveBell server makes **no AI model calls**. It was 
 - **Report credibility:** registry lookups and publishers, decided by rule. No web search.
 - **Timeline:** dates from registry records only.
 - **"What could happen":** a fixed template for the type of flaw, with only the version step marked as checked.
-- **Fix:** a dependency upgrade to the first patched version, drafted in code, then the same preview and approval flow.
+- **Fix:** a dependency upgrade to the first patched version, drafted in code, then the same preview and approval flow. One-click fixes run in your own GitHub Actions after you add a small workflow file (the fix dialog shows it). By default the runner applies the previewed upgrade with no AI; set `SAVEBELL_AGENT` in your repository to use your own model or coding agent instead.
 - **Your own AI is optional:** connect your coding agent over MCP, or, if you self-host, set `AI_BASE_URL` and `AI_MODEL` to your own OpenAI-compatible model (for example Ollama). SaveBell never stores an AI key for you.
 
 The usage that led to this change is recorded in `docs/PIVOT_BASELINE.md`.
@@ -93,7 +93,7 @@ The consumer Meta AI app does not support third-party MCP servers, so it is not 
 ## Security boundary
 
 - The server reads repository metadata, trees and cited files at one commit. Nothing is cloned on the server and nothing from a repository is executed there.
-- Automated fixes run in an ephemeral GitHub Actions VM with a short-lived clone token; secrets are removed from the environment before tests run; the runner cannot push.
+- Automated fixes run in the repository owner's own GitHub Actions. SaveBell sends no token to the runner; the runner proves which repository it is with a GitHub OIDC token and a single-use nonce. Secrets and AI keys are removed from the environment before tests run; the runner cannot push.
 - Writes happen only after explicit per-fix authorization, only to files on the allowlist, and only through the GitHub App; push mode merges only after passing checks and never bypasses branch protection.
 - Advisory, feed, web and repository text is untrusted data, fenced in prompts and in MCP output (`untrusted_*`).
 
@@ -116,9 +116,9 @@ Not collected: every other feed that was in the earlier list (oss-security, Full
 
 ```bash
 npm ci
-cp .env.example .env.local   # at minimum META_API_KEY
+cp .env.example .env.local   # no AI key needed
 npm run dev
 npm test
 ```
 
-See `SETUP.md` for every variable, the GitHub App, the scheduler and the remediation runner, and `CONTRIBUTING.md` for checks and ground rules. `docs/USER_GUIDE.md` walks through the product.
+See `SETUP.md` for every variable, the GitHub App, the scheduler and the fix runner, and `CONTRIBUTING.md` for checks and ground rules. `docs/USER_GUIDE.md` walks through the product.

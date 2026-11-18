@@ -26,12 +26,10 @@ export const env = {
   GITHUB_APP_SLUG: process.env.GITHUB_APP_SLUG ?? "",
   // Web "Fix" (server-drafted patch -> draft PR) stays hidden until an end-to-end run on a real repo has succeeded.
   FIX_ENABLED: process.env.FIX_ENABLED === "1",
-  // Automated remediation runner (Muse Code on GitHub Actions, see lib/runner.ts). Dispatch needs a fine-grained PAT with
-  // Actions: write on RUNNER_REPO only; the runner authenticates its callbacks with ARGUS_RUNNER_SECRET + a per-fix nonce.
-  RUNNER_DISPATCH_TOKEN: process.env.RUNNER_DISPATCH_TOKEN ?? "",
-  ARGUS_RUNNER_SECRET: process.env.ARGUS_RUNNER_SECRET ?? "",
+  // Automated fix runner (lib/runner.ts). It runs in the USER's own GitHub Actions: SaveBell starts (workflow_dispatch)
+  // through the GitHub App, and the user's workflow calls the reusable workflow published in RUNNER_REPO. Callbacks are
+  // authenticated with GitHub's Actions OIDC token + a per-fix nonce; there is no shared secret and no owner AI key.
   RUNNER_REPO: process.env.RUNNER_REPO ?? "chewonc/save-bell",
-  RUNNER_WORKFLOW: process.env.RUNNER_WORKFLOW ?? "remediate.yml",
   NVD_API_KEY: process.env.NVD_API_KEY ?? "",
   // Hosted per-repo analyses per user per calendar month before findings stay "Possible issue" for the user's own agent.
   HOSTED_ANALYSIS_CAP: Number(process.env.HOSTED_ANALYSIS_CAP ?? 20),
@@ -52,7 +50,7 @@ export const hasAuth = () => !!(env.BETTER_AUTH_SECRET && env.GITHUB_CLIENT_ID &
 export const hasGitHubApp = () => !!(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY);
 export const hasTranslate = () => !!env.GOOGLE_TRANSLATE_API_KEY;
 export const hasPush = () => !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY);
-export const hasRunner = () => !!(env.FIX_ENABLED && env.RUNNER_DISPATCH_TOKEN && env.ARGUS_RUNNER_SECRET);
+export const hasRunner = () => !!(env.FIX_ENABLED && hasGitHubApp());
 
 // Constant-time check of an Authorization header against `Bearer ${ADMIN_TOKEN}`. False when ADMIN_TOKEN is unset.
 export function isAdminAuth(header: string | null | undefined): boolean {

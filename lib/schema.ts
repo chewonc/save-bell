@@ -306,7 +306,7 @@ export const Fix = z.object({
     action: z.enum(["pr", "branch", "pr_then_merge"]), branch: z.string(), base_branch: z.string(),
     issued_at: z.string(), expires_at: z.string(), merge_expires_at: z.string().nullable(), revoked_at: z.string().nullable(),
   }).nullable().default(null),
-  agent: z.enum(["muse-spark", "muse-code"]).default("muse-spark"), // who produced fix.files
+  agent: z.enum(["muse-spark", "muse-code", "runner"]).default("muse-spark"), // who produced fix.files ("runner" = the fix runner in the user's GitHub Actions)
   allowed_files: z.array(z.string()).default([]), // the only paths the runner may change (enforced server-side on the result)
   nonce_hash: z.string().nullable().default(null), // single-use runner credential (sha256), cleared once consumed
   events: z.array(z.object({ at: z.string(), actor: z.string(), action: z.string(), detail: z.string(), url: z.string().nullable().default(null) })).default([]),
@@ -316,6 +316,7 @@ export const Fix = z.object({
     started_at: z.string().nullable().default(null),
     finished_at: z.string().nullable().default(null),
     muse_version: z.string().nullable().default(null),
+    agent: z.string().nullable().optional(), // who edited inside the runner: "rules", "model <name>", "command <name>"
     steps: z.number().nullable().default(null),
     summary: z.string().default(""),
     changed_files: z.array(z.string()).default([]),

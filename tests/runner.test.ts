@@ -27,15 +27,17 @@ test("push-mode merge decision never merges unvalidated or failing changes", () 
   assert.equal(mergeDecision([], false, 3), "refuse_unvalidated");
 });
 
-test("runner callbacks require the shared secret and the single-use nonce", () => {
-  process.env.ARGUS_RUNNER_SECRET = "s3cret-value";
-  const nonceHash = "4c5f4b2f6c1d8a1f7ad8b3a0f1d0e0c3f0a1c1e2d3b4a5968778695a4b3c2d1e"; // not the hash of "x"
-  const fix = { nonce_hash: nonceHash } as unknown as Fix;
-  const req = (secret: string) => new Request("https://x", { headers: { "x-argus-runner-secret": secret } });
-  assert.throws(() => checkRunnerAuth(fix, req("wrong"), "x"), /secret/);
-  // env is read at import time; with no secret configured every call must fail closed
-  assert.throws(() => checkRunnerAuth(fix, req("s3cret-value"), "x"));
-  assert.throws(() => checkRunnerAuth({ nonce_hash: null } as unknown as Fix, req("s3cret-value"), "x"));
+test("runner callbacks need GitHub's token for the fix's own repository, SaveBell's runner workflow, and the single-use nonce", async () => {
+  const { createHash } = await import("node:crypto");
+  const fix = { repo: "Alice/App", nonce_hash: createHash("sha256").update("n1").digest("hex") } as unknown as Fix;
+  const good = { repository: "alice/app", job_workflow_ref: "chewonc/save-bell/.github/workflows/savebell-runner.yml@refs/heads/main" };
+  assert.doesNotThrow(() => checkRunnerAuth(fix, good, "n1"), "repository names compare case-insensitively");
+  assert.throws(() => checkRunnerAuth(fix, null, "n1"), /token missing/);
+  assert.throws(() => checkRunnerAuth(fix, { ...good, repository: "mallory/app" }, "n1"), /different repository/);
+  assert.throws(() => checkRunnerAuth(fix, { ...good, job_workflow_ref: "mallory/tools/.github/workflows/savebell-runner.yml@main" }, "n1"), /SaveBell workflow/);
+  assert.throws(() => checkRunnerAuth(fix, { repository: "alice/app" }, "n1"), /SaveBell workflow/, "a workflow that does not call the reusable runner is refused");
+  assert.throws(() => checkRunnerAuth(fix, good, "wrong"), /nonce invalid/);
+  assert.throws(() => checkRunnerAuth({ ...fix, nonce_hash: null }, good, "n1"), /nonce invalid/);
 });
 
 test("audit events append with timestamps and never drop earlier events", () => {

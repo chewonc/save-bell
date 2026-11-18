@@ -1,6 +1,6 @@
 # SaveBell — setup and operations
 
-Everything here is read-only toward your repositories except a pull request (and, in "Fix & push" mode, its merge after passing checks) that a user explicitly authorizes. The SaveBell server never executes repository code. Automated fixes are edited by Meta Muse Code and tested inside an ephemeral GitHub Actions runner, never on the server. SaveBell never reproduces or exploits a vulnerability.
+Everything here is read-only toward your repositories except a pull request (and, in "Fix & push" mode, its merge after passing checks) that a user explicitly authorizes. The SaveBell server never executes repository code. Automated fixes are edited and tested in the repository owner's own GitHub Actions, never on the server, by rules or by the owner's own AI. SaveBell never reproduces or exploits a vulnerability.
 
 ## 1. Secrets (never commit, never paste into chat)
 
@@ -21,22 +21,25 @@ Create `.env.local` at the project root (gitignored). On Vercel, add the same na
 | `GOOGLE_TRANSLATE_API_KEY` | optional | Not needed. Without it the UI is English plus the reviewed Korean dictionary. Set it only if you want paid machine translation into other languages. |
 | `NVD_API_KEY` | optional | Raises the NVD API rate limit (public: 5 requests / 30 s). |
 | `FIX_ENABLED` | optional | `1` enables fix drafting and authorized write actions. Off by default. |
-| `RUNNER_DISPATCH_TOKEN` | for automated fixes | Fine-grained PAT on **this** repository only, permission *Actions: read and write*. Used to dispatch `.github/workflows/remediate.yml`. |
-| `ARGUS_RUNNER_SECRET` | for automated fixes | Long random string; set the same value as the Actions secret `ARGUS_RUNNER_SECRET`. |
-| `RUNNER_REPO`, `RUNNER_WORKFLOW` | optional | Defaults `chewonc/save-bell`, `remediate.yml`. |
+| `RUNNER_REPO` | optional | Repository that publishes the reusable runner workflow `.github/workflows/savebell-runner.yml`. Default `chewonc/save-bell`. The OIDC check only accepts runs of that workflow. |
 | `AW_AGENTIC` | optional | Only with a self-hosted model: set to `0` to switch off its repository investigation step. (`AW_VERIFY_MODEL` no longer exists: the report fact-check uses registry lookups only.) |
 | `VAPID_PUBLIC_KEY`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | optional (browser push) | `npx web-push generate-vapid-keys`; put the public key in both public-key variables; subject is `mailto:you@example.com`. |
 | `DEMO_SHARED_REPOS` | optional | `1` shows admin-registered (system) repositories to every signed-in user, labelled demo. |
 | `ADMIN_TOKEN` | yes | Long random string protecting `/api/admin`, `/api/analyze`, manual polls and the push fan-out route. |
 | `APP_URL` | yes for deployment | Public base URL (`https://save-bell.vercel.app`). The save-bell.vercel.app domain is pending until the Vercel project is migrated; until then the deployment answers at its previous URL. QStash, GitHub and Better Auth call back to it. |
 
-## 1b. Automated remediation runner (Meta Muse Code)
+## 1b. Automated fixes in the user's own GitHub Actions
 
-1. Repository secrets (GitHub → this repo → Settings → Secrets and variables → Actions): `META_API_KEY`, `ARGUS_RUNNER_SECRET`. Optional variables `ARGUS_URL` (defaults to the production URL) and `MUSE_APPROVAL_FLAGS` (default: approvals off with Muse Code's sandbox on, no shell, no web tools; see `docs/VALIDATION_MUSE_CODE.md`).
-2. Vercel: `FIX_ENABLED=1`, `RUNNER_DISPATCH_TOKEN`, `ARGUS_RUNNER_SECRET`.
-3. For a repository to receive fixes: the GitHub App installation must have Contents + Pull requests write, and the user enables changes for it on the Repos page.
+SaveBell keeps no runner secret and no AI key. Each fix runs in the repository owner's own GitHub Actions minutes.
 
-The runner clones the repository at the assessed commit with a short-lived installation token, runs `muse exec --json`, enforces the file allowlist, runs the repository's tests with secrets removed from the environment, and posts the result back. SaveBell re-validates and only then writes through the GitHub App. The runner never pushes.
+1. Vercel: `FIX_ENABLED=1`. The GitHub App needs **Actions: write** to start the user's `savebell.yml` (`workflow_dispatch`; this permission cannot read or change code). Writing an approved fix still needs Contents: write, plus Pull requests: write for PR mode.
+2. Each user adds `.github/workflows/savebell.yml` to the default branch of their repository once. The fix dialog shows the exact file with a copy button and a "Create the file on GitHub" link; until it is there the dialog explains what is missing.
+3. Optional, in the user's repository only (Settings → Secrets and variables → Actions):
+   - nothing: the fix is made by **rules**, applying the dependency bump SaveBell previewed. No AI.
+   - `SAVEBELL_AGENT=model`, `SAVEBELL_AI_BASE_URL`, `SAVEBELL_AI_MODEL` (variables) and `SAVEBELL_AI_API_KEY` (secret): any OpenAI-compatible endpoint edits the allowed files.
+   - `SAVEBELL_AGENT=command`, `SAVEBELL_AGENT_CMD` (the coding-agent CLI; the prompt file path is in `$SAVEBELL_PROMPT_FILE`), `SAVEBELL_AGENT_KEY_ENV` (the env var the CLI reads its key from) and `SAVEBELL_AGENT_KEY` (secret).
+
+SaveBell starts `savebell.yml` on the default branch (`workflow_dispatch`) with a fix id, a single-use nonce and the assessed commit. The runner checks out that commit with the repository's own `GITHUB_TOKEN`, proves itself to SaveBell with a GitHub Actions OIDC token (audience = `APP_URL`; SaveBell checks the repository and that the run uses `savebell-runner.yml`), makes the edit, enforces the file allowlist, regenerates the lockfile, runs the repository's tests with secrets removed from the environment, and posts the result back. SaveBell re-validates and writes through the GitHub App only after the user approves that exact diff. The runner never pushes.
 
 ## 2. Accounts and one-time setup (owner actions)
 
@@ -56,7 +59,7 @@ The runner clones the repository at the assessed commit with a short-lived insta
 
 ### 2.1 Checklist for a new deployment
 
-Status of the reference deployment (save-bell.vercel.app, Nov 4 2026, from `/api/status.features`): sign-in, GitHub App, `FIX_ENABLED` and the Muse Code runner are configured; the 5-minute tick schedule is delivering; **Web Push is not configured** (no VAPID keys). On a new deployment the landing page shows "Sign-in is not configured on this deployment yet" and `POST /api/auth/sign-in/social` answers 503 until step C is done.
+Status of the reference deployment (save-bell.vercel.app, Nov 4 2026, from `/api/status.features`): sign-in, GitHub App, `FIX_ENABLED` is configured; the 5-minute tick schedule is delivering; **Web Push is not configured** (no VAPID keys). On a new deployment the landing page shows "Sign-in is not configured on this deployment yet" and `POST /api/auth/sign-in/social` answers 503 until step C is done.
 
 A. **GitHub App → OAuth client (for sign-in).** On the App's settings page (github.com/settings/apps/<slug>): under "Identifying and authorizing users" set Callback URL `https://save-bell.vercel.app/api/auth/callback/github`; tick **Expire user authorization tokens** off or on (both work); leave "Request user authorization (OAuth) during installation" **off**. Click **Generate a new client secret**; copy the **Client ID** and the secret.
 B. **GitHub App → private key, permissions, events.** Under "Private keys" click **Generate a private key** (downloads a `.pem`). Under "Permissions & events": Repository → Metadata Read, Contents **Read and write**, Pull requests **Read and write**, Checks Read; Account → Email addresses Read; Subscribe to events: Security advisory, Push, Installation, Installation repositories. Save. GitHub then asks every existing installation (your account) to **accept the new permissions**: open github.com/settings/installations → SaveBell → "Review request" and accept. Set Setup URL `https://save-bell.vercel.app/api/github/setup` with **Redirect on update** ticked.

@@ -127,6 +127,15 @@ test("8 + boundary audit: only fix-apply.ts and runner.ts call GitHub write APIs
   }
   const mcp = readFileSync(join(SRC, "lib/mcp.ts"), "utf8");
   assert.doesNotMatch(mcp, /fix-apply|approveValidated|tryMerge|installationOctokit|scopedRepoOctokit|startRun/);
-  // the runner's clone credential is read-only and limited to the one repository
-  assert.match(readFileSync(join(SRC, "lib/runner.ts"), "utf8"), /scopedRepoToken\(installationId, fix\.repo\.split\("\/"\)\[1\], \{ contents: "read", metadata: "read" \}\)/);
+  // The runner receives no GitHub token at all (it checks out with its own repository's GITHUB_TOKEN). The one
+  // Starting the runner uses an Actions-write token only (workflow_dispatch): no Contents write, scoped to the fix's
+  // repository and used for that single call, never stored or handed out.
+  const runner = readFileSync(join(SRC, "lib/runner.ts"), "utf8");
+  assert.doesNotMatch(runner, /clone_token|cloneToken/);
+  assert.doesNotMatch(runner, /scopedRepoToken\([^)]*contents: "write"/, "no Contents-write token is minted to start a run");
+  const dispatchTokens = [...runner.matchAll(/scopedRepoToken\([^)]*\{ actions: "write" \}\)/g)];
+  assert.equal(dispatchTokens.length, 1, "exactly one Actions-write token");
+  const after = runner.slice(dispatchTokens[0].index, dispatchTokens[0].index! + 600);
+  assert.match(after, /\/repos\/\$\{owner\}\/\$\{name\}\/actions\/workflows\/\$\{CALLER_FILE\}\/dispatches`/, "and it starts the SaveBell workflow only");
+  assert.match(dispatchTokens[0][0], /scopedRepoToken\(installationId, name,/, "scoped to the fix's own repository");
 });

@@ -226,7 +226,7 @@ export const dict: Partial<Dict> = {
   what_if_not_fixed: "수정하지 않으면 어떻게 되나요?",
   threat_timeline: "위협 타임라인",
   simulate_impact: "사용자 영향 시뮬레이션",
-  automated_fix: "자동 수정 · Meta Muse Code",
+  automated_fix: "자동 수정 · 내 GitHub Actions에서 실행",
   report_not_checked: "보고서 미검증",
   report_not_checked_long: "이 보고서는 아직 팩트체크되지 않았습니다.",
   report_prefix: "보고서",
