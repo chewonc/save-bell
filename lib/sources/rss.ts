@@ -4,6 +4,8 @@ import { XMLParser } from "fast-xml-parser";
 import { canonicalUrl, extractIds, sha } from "../dedup";
 import type { Item } from "../schema";
 import { USER_AGENT } from "../ua";
+import { titleOnly } from "./terms";
+import { arxivFetch, isArxivUrl } from "./arxiv-limit";
 
 // cadence: "fast" feeds are fetched on every 5-minute tick (near-real-time); "slow" feeds hourly (periodic), matching how often they actually publish.
 // demo: the feed's terms permit personal/non-commercial use only; items are labelled low-trust and the feed is listed as demo-only.
@@ -31,7 +33,6 @@ export const FEEDS: Feed[] = [
   { id: "arxiv-cscr", name: "arXiv cs.CR", url: "https://rss.arxiv.org/atom/cs.CR", kind: "academic", cadence: "slow" },
   { id: "arxiv-ai-sec", name: "arXiv query: prompt injection / LLM agents", url: "http://export.arxiv.org/api/query?search_query=%28cat:cs.CR+OR+cat:cs.AI+OR+cat:cs.LG%29+AND+%28abs:%22prompt+injection%22+OR+abs:jailbreak+OR+abs:%22LLM+agent%22+OR+abs:%22model+context+protocol%22%29&sortBy=submittedDate&max_results=25", kind: "academic", cadence: "slow" },
   { id: "mastodon-infosec", name: "Mastodon infosec.exchange #vulnerability", url: "https://infosec.exchange/tags/vulnerability.rss", kind: "social", cadence: "slow" },
-  { id: "gnews-ai-sec", name: "Google News: AI security (demo only)", url: "https://news.google.com/rss/search?q=%22prompt+injection%22+OR+%22AI+agent%22+vulnerability&hl=en-US&gl=US&ceid=US:en", kind: "news", cadence: "slow", demo: true },
 ];
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_", textNodeName: "#text", cdataPropName: "#cdata" });
@@ -105,7 +106,8 @@ export async function fetchFeed(f: Feed, cond: Conditional = {}): Promise<{ entr
   const headers: Record<string, string> = { "User-Agent": USER_AGENT, Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml" };
   if (cond.etag) headers["If-None-Match"] = cond.etag;
   if (cond.last_modified) headers["If-Modified-Since"] = cond.last_modified;
-  const r = await fetch(f.url, { headers, signal: AbortSignal.timeout(15000) });
+  // arXiv feeds share one global rate limiter with the arXiv lookup in lib/verify.ts (lib/sources/arxiv-limit.ts).
+  const r = isArxivUrl(f.url) ? await arxivFetch(f.url, () => ({ headers, signal: AbortSignal.timeout(15000) })) : await fetch(f.url, { headers, signal: AbortSignal.timeout(15000) });
   if (r.status === 304) return { entries: [], not_modified: true, etag: cond.etag ?? null, last_modified: cond.last_modified ?? null };
   if (!r.ok) throw new Error(`${f.id} ${r.status}`);
   return { entries: parseFeed(await r.text()), not_modified: false, etag: r.headers.get("etag"), last_modified: r.headers.get("last-modified") };
@@ -113,7 +115,9 @@ export async function fetchFeed(f: Feed, cond: Conditional = {}): Promise<{ entr
 
 export function itemFromEntry(f: Feed, e: FeedEntry, discovered_at: string): Item {
   const url = canonicalUrl(e.link);
-  const text = `${e.title}\n\n${e.summary}`;
+  const full = `${e.title}\n\n${e.summary}`;
+  // "Title and link only" sources (lib/sources/terms.ts): the summary is read to find advisory IDs, but not stored or shown.
+  const text = titleOnly(f.id) ? e.title : full;
   return {
     id: sha(`rss:${f.id}:${e.guid}`),
     source: "rss",
@@ -122,7 +126,7 @@ export function itemFromEntry(f: Feed, e: FeedEntry, discovered_at: string): Ite
     title: e.title || "(untitled)",
     author: e.author ?? f.name,
     text,
-    ids: extractIds(text),
+    ids: extractIds(full),
     packages: [],
     published_at: e.published,
     discovered_at,

@@ -3,18 +3,21 @@ import { sendAlert } from "./alert";
 import { assess } from "./analyze";
 import { sha, upsertFinding } from "./dedup";
 import { extractClaim } from "./extract";
-import { fetchPageText } from "./fetchpage";
 import { notifyAssessment } from "./notify";
 import { enqueueProcess } from "./queue";
 import { refreshRepo } from "./repo";
 import type { Finding, Item, WatchedRepo } from "./schema";
 import { store } from "./store";
+import { feedOf, itemBlocked } from "./sources/gate";
 import { chargeHosted, hostedBudgetLeft } from "./usage";
 import { buildTimeline } from "./timeline";
 import { verifyFinding } from "./verify";
 
 /** Stage 1 entry for every source. Returns whether a (new or changed) finding was queued. */
 export async function ingest(item: Item, opts: { enqueue?: boolean; replayed?: boolean } = {}): Promise<{ finding: Finding; queued: boolean; created: boolean }> {
+  // Last line of the source-permissions gate: whatever path an item arrives by (poll, webhook, admin replay), an item
+  // from a source without a recorded permission is refused before anything is stored.
+  if (itemBlocked(item)) throw new Error(`source not permitted: ${item.source}${feedOf(item) ? `/${feedOf(item)}` : ""} (docs/SOURCES_AUDIT.md)`);
   await store.putItem(item);
   const { finding, changed, created } = await upsertFinding(item);
   if (changed && opts.enqueue !== false) {
@@ -63,12 +66,8 @@ export async function processFinding(id: string, opts: { replayed?: boolean; onl
   if (!f) return;
   try {
     const items = (await Promise.all(f.items.map((i) => store.getItem(i)))).filter((x): x is Item => !!x);
-    let text = items.map((i) => `[${i.source}] ${i.title}\n${i.text}`).join("\n\n---\n\n");
-    // S4: fetch the linked page for feed items whose summary is short
-    for (const i of items) if (i.source === "rss" && i.url && i.text.length < 1500) {
-      const p = await fetchPageText(i.url);
-      if (p.ok) text += `\n\n[page ${i.url}]\n${p.text}`; else await store.log({ kind: "process", source: "fetchpage", detail: `skipped ${i.url}: ${p.reason}`, ref: f.id });
-    }
+    // Linked article pages are no longer fetched: robots.txt is not permission to copy a page (docs/SOURCES_AUDIT.md).
+    const text = items.map((i) => `[${i.source}] ${i.title}\n${i.text}`).join("\n\n---\n\n");
     // Backfill (a repository was just connected): check this one repository only and never downgrade the finding's status.
     // Paused repositories (every watcher paused it) get no new assessments; their history is kept.
     const listed = (await store.listRepos()).filter((r) => !opts.onlyRepo || store.repoKey(r) === opts.onlyRepo);

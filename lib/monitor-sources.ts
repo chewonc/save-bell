@@ -6,9 +6,10 @@
 import { hasGitHubApp } from "./env";
 import { POLLERS, type PollState } from "./poll";
 import { FEEDS } from "./sources/rss";
+import { collectable, termsFor } from "./sources/terms";
 import { store } from "./store";
 
-export type SourceStatus = "active" | "delayed" | "unavailable" | "not_configured" | "unknown";
+export type SourceStatus = "active" | "delayed" | "unavailable" | "not_configured" | "paused" | "unknown";
 export type MonitoredSource = { id: string; name: string; url: string; status: SourceStatus; last_ok: string | null };
 export type SourceGroup = { id: "advisories" | "ai" | "research"; title: string; sources: MonitoredSource[] };
 
@@ -40,7 +41,7 @@ export async function monitoredSources(now = Date.now()): Promise<SourceGroup[]>
   const poller = (id: string) => POLLERS.find((p) => p.id === id)!;
   const fromPoller = (id: string, name: string, url: string): MonitoredSource => {
     const st = states.get(id) ?? null;
-    return { id, name, url, status: statusFrom(st, poller(id).interval_min, now), last_ok: st?.last_ok ?? null };
+    return { id, name, url, status: collectable(id) ? statusFrom(st, poller(id).interval_min, now) : "paused", last_ok: st?.last_ok ?? null };
   };
   const advisories: MonitoredSource[] = [
     fromPoller("ghadv", "GitHub Security Advisories", "https://github.com/advisories"),
@@ -49,15 +50,17 @@ export async function monitoredSources(now = Date.now()): Promise<SourceGroup[]>
     fromPoller("kev", "CISA Known Exploited Vulnerabilities", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"),
   ];
   // GitHub App advisory webhook: event-driven, so "active" means configured and seen recently; never claimed otherwise.
-  if (!hasGitHubApp()) advisories.push({ id: "ghsa-webhook", name: "GitHub advisory events (instant)", url: "https://github.com/advisories", status: "not_configured", last_ok: null });
+  if (!collectable("ghadv")) advisories.push({ id: "ghsa-webhook", name: "GitHub advisory events (instant)", url: "https://github.com/advisories", status: "paused", last_ok: lastWebhook });
+  else if (!hasGitHubApp()) advisories.push({ id: "ghsa-webhook", name: "GitHub advisory events (instant)", url: "https://github.com/advisories", status: "not_configured", last_ok: null });
   else advisories.push({ id: "ghsa-webhook", name: "GitHub advisory events (instant)", url: "https://github.com/advisories", status: lastWebhook ? (now - Date.parse(lastWebhook) < 7 * 86400e3 ? "active" : "delayed") : "unknown", last_ok: lastWebhook });
   const ai: MonitoredSource[] = [], research: MonitoredSource[] = [];
   for (const f of FEEDS) {
     if (f.demo) continue; // demo-only feeds are not part of monitoring
+    if (termsFor(f.id).status === "removed") continue; // terms prohibit collection: not something SaveBell monitors
     const pollerId = f.cadence === "fast" ? "rss" : "rss-slow";
     const s = seen[f.id];
     // Per-feed result when recorded; before that, only that the feed has been read at least once.
-    const status: SourceStatus = s?.last_ok !== undefined || s?.last_error ? statusFrom({ last_ok: s?.last_ok ?? null, last_error: s?.last_error ?? null, runs: 1 }, poller(pollerId).interval_min, now) : s?.first_ok ? "unknown" : "unknown";
+    const status: SourceStatus = !collectable(f.id) ? "paused" : s?.last_ok !== undefined || s?.last_error ? statusFrom({ last_ok: s?.last_ok ?? null, last_error: s?.last_error ?? null, runs: 1 }, poller(pollerId).interval_min, now) : s?.first_ok ? "unknown" : "unknown";
     const entry = { id: f.id, name: f.name.replace(/ \(demo only\)$/, ""), url: homeOf(f.id, f.url), status, last_ok: s?.last_ok ?? null };
     if (f.kind === "list" || f.kind === "vendor" && /msrc|certcc/.test(f.id)) advisories.push(entry);
     else if (AI_KINDS.has(f.kind) || f.id === "arxiv-ai-sec") ai.push(entry);
@@ -70,14 +73,14 @@ export async function monitoredSources(now = Date.now()): Promise<SourceGroup[]>
   ];
 }
 
-export const STATUS_LABEL: Record<SourceStatus, string> = { active: "Active", delayed: "Delayed", unavailable: "Unavailable", not_configured: "Not configured", unknown: "Status not recorded yet" };
+export const STATUS_LABEL: Record<SourceStatus, string> = { active: "Active", delayed: "Delayed", unavailable: "Unavailable", not_configured: "Not configured", paused: "Paused: terms under review", unknown: "Status not recorded yet" };
 
 /** Category summary for "What we monitor": "12 sources · all active", or the counts of each other state. From real status. */
 export function groupSummary(sources: { status: SourceStatus }[]): { text: string; worst: SourceStatus } {
   const n = sources.length;
   const by = (s: SourceStatus) => sources.filter((x) => x.status === s).length;
-  const worst = (["unavailable", "delayed", "unknown", "not_configured", "active"] as const).find((s) => by(s) > 0) ?? "unknown";
+  const worst = (["unavailable", "delayed", "unknown", "paused", "not_configured", "active"] as const).find((s) => by(s) > 0) ?? "unknown";
   if (n && by("active") === n) return { text: `${n} source${n === 1 ? "" : "s"} · all active`, worst };
-  const parts = (["active", "delayed", "unavailable", "not_configured", "unknown"] as const).filter((s) => by(s) > 0).map((s) => `${by(s)} ${s === "unknown" ? "not recorded yet" : STATUS_LABEL[s].toLowerCase()}`);
+  const parts = (["active", "delayed", "unavailable", "paused", "not_configured", "unknown"] as const).filter((s) => by(s) > 0).map((s) => `${by(s)} ${s === "unknown" ? "not recorded yet" : STATUS_LABEL[s].toLowerCase()}`);
   return { text: `${n} source${n === 1 ? "" : "s"} · ${parts.join(", ")}`, worst };
 }

@@ -3,7 +3,8 @@
 import { computeLatency } from "@/lib/latency";
 import { POLLERS, TICK_MIN, type PollState } from "@/lib/poll";
 import { FEEDS, type Feed } from "@/lib/sources/rss";
-import { communityFeeds, listSuggestions } from "@/lib/source-suggest";
+import { listSuggestions } from "@/lib/source-suggest";
+import { SOURCE_TERMS, TERMS_LABEL, collectable, termsFor } from "@/lib/sources/terms";
 import { currentUser } from "@/lib/session";
 import { store } from "@/lib/store";
 import { fmtTime, human } from "@/components/ui";
@@ -13,7 +14,7 @@ import { getDict, getLocale } from "@/lib/i18n";
 const median = (xs: number[]) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] : null);
 const CLASS_LABEL = { push: "Pushed to SaveBell (event-driven)", near_realtime: "Checked every 5 minutes", periodic: "Checked on the source's own schedule" } as const;
 const KIND: Record<Feed["kind"], string> = { list: "mailing list", release: "releases", research: "research", ai_security: "AI security", academic: "academic", aggregator: "aggregator", vendor: "vendor", incidents: "incidents", social: "social", news: "news" };
-const STATUS_WORD = { registered: "added to monitoring", needs_review: "waiting for review", rejected: "not added", duplicate: "already covered" } as const;
+const STATUS_WORD = { registered: "passed the automatic checks; not collected until its terms are reviewed", needs_review: "waiting for review", rejected: "not added", duplicate: "already covered" } as const;
 
 const Bullets = ({ children }: { children: React.ReactNode }) => <ul className="list-disc pl-5 grid gap-1 marker:text-ink2">{children}</ul>;
 const Group = ({ title, children }: { title: string; children: React.ReactNode }) => (
@@ -22,7 +23,7 @@ const Group = ({ title, children }: { title: string; children: React.ReactNode }
 
 /** Source coverage body. `embedded` drops the page container and title (used inside Monitoring status → Advanced diagnostics). */
 export async function SourceCoverage({ embedded = false }: { embedded?: boolean }) {
-  const [states, log, findings, assessments, community, user] = await Promise.all([Promise.all(POLLERS.map((p) => store.getPollState<PollState>(p.id))), store.recentLog(500), store.listFindings(), store.listAssessments(200), communityFeeds().catch(() => []), currentUser().catch(() => null)]);
+  const [states, log, findings, assessments, user] = await Promise.all([Promise.all(POLLERS.map((p) => store.getPollState<PollState>(p.id))), store.recentLog(500), store.listFindings(), store.listAssessments(200), currentUser().catch(() => null)]);
   const mine = user && !embedded ? await listSuggestions(user.id, 10).catch(() => []) : [];
   const lat = await computeLatency(assessments, findings);
   const d = await getDict(await getLocale());
@@ -32,7 +33,8 @@ export async function SourceCoverage({ embedded = false }: { embedded?: boolean 
     const st = states[i];
     return { ...p, measured: st?.intervals_ms?.length ? `${(median(st.intervals_ms)! / 60e3).toFixed(1)} min` : "not measured yet", runs: st?.runs ?? 0, lastOk: st?.last_ok ?? null, err: st?.last_error, l1: l1(p.id) };
   });
-  const feedsFor = (id: string) => [...FEEDS.filter((f) => (id === "rss" ? f.cadence === "fast" : f.cadence === "slow")), ...(id === "rss-slow" ? community : [])];
+  // Suggested (community) feeds are not listed: none is collected until an operator has reviewed its terms.
+  const feedsFor = (id: string) => FEEDS.filter((f) => (id === "rss" ? f.cadence === "fast" : f.cadence === "slow"));
   const t = "text-[calc(13px*var(--ui))]";
   return (
     <div className={`${embedded ? "grid gap-8" : "mx-auto max-w-[calc(860px*var(--ui))] px-4 sm:px-6 py-8 sm:py-10 grid gap-10"} min-w-0 [overflow-wrap:anywhere] ${t}`}>
@@ -70,12 +72,13 @@ export async function SourceCoverage({ embedded = false }: { embedded?: boolean 
                   <li>Last successful check: {fmtTime(p.lastOk)} ({p.runs} runs).</li>
                   <li>Publication to discovery: {p.l1}.</li>
                   {p.err && <li className="tone-bad">Problem: {p.err}</li>}
+                  {!p.id.startsWith("rss") && !collectable(p.id) && <li className="tone-warn">Paused: this source&apos;s terms are under review, so nothing is collected from it.</li>}
                 </Bullets>
                 {p.id.startsWith("rss") && (
                   <details className="disclose">
-                    <summary>Feeds in this group ({feedsFor(p.id).length})</summary>
+                    <summary>Feeds in this group ({feedsFor(p.id).filter((f) => collectable(f.id)).length} collected, {feedsFor(p.id).filter((f) => !collectable(f.id)).length} paused or removed)</summary>
                     <ul className="list-disc pl-5 grid sm:grid-cols-2 gap-x-6 gap-y-1 mt-2 marker:text-ink2">
-                      {feedsFor(p.id).map((f) => <li key={f.id}><a href={f.url}>{f.name}</a> <span className="text-ink2">· {KIND[f.kind]}{f.demo ? " · demo only, low trust" : ""}{f.community ? " · suggested by a user" : ""}</span></li>)}
+                      {feedsFor(p.id).map((f) => <li key={f.id}><a href={f.url}>{f.name}</a> <span className="text-ink2">· {KIND[f.kind]} · {TERMS_LABEL[termsFor(f.id).status]}</span></li>)}
                     </ul>
                   </details>
                 )}
@@ -103,20 +106,27 @@ export async function SourceCoverage({ embedded = false }: { embedded?: boolean 
         </Bullets>
       </Group>
 
+      <Group title="Licences and attribution">
+        <p className="text-ink2">A source is collected only when its published terms cover automated collection, storage and display, and that review is recorded. A public RSS feed alone is not treated as permission. Items collected earlier from sources that are now paused are kept for review but no longer shown.</p>
+        <Bullets>
+          {Object.entries(SOURCE_TERMS).filter(([, v]) => v.attribution).map(([id, v]) => <li key={id}>{v.attribution}{v.terms_url ? <> (<a href={v.terms_url}>terms</a>, read {v.read_at})</> : null}</li>)}
+        </Bullets>
+      </Group>
+
       <Group title="Not collected">
         <Bullets>
           <li><b>X</b>: pay-per-use API only ($0.005 per post read); not funded.</li>
           <li><b>Threads</b>: keyword search needs Meta App Review.</li>
           <li><b>LinkedIn</b>: no public post-search API; terms prohibit scraping.</li>
           <li><b>Reddit</b>: RSS ends Nov 13 2026; the public API closes March 2027.</li>
-          <li><b>Google Custom Search</b>: closed to new customers. Google News RSS is used as a demo-only, low-trust feed (personal, non-commercial terms).</li>
+          <li><b>Google News RSS</b>: not collected; public monitoring and redistribution are not covered by its personal-use terms.</li>
         </Bullets>
         <p className="text-ink2">Pages from these platforms can still appear when a monitored feed links to them.</p>
       </Group>
 
       {mine.length > 0 && (
         <Group title="Your suggestions">
-          <Bullets>{mine.map((s) => <li key={s.id}><b>{s.name}</b> <span className="text-ink2">· {STATUS_WORD[s.status]}: {s.reason}</span></li>)}</Bullets>
+          <Bullets>{mine.map((s) => <li key={s.id}><b>{s.name}</b> <span className="text-ink2">· {STATUS_WORD[s.status]}{s.status === "registered" ? "" : `: ${s.reason}`}</span></li>)}</Bullets>
         </Group>
       )}
     </div>

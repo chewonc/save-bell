@@ -1,6 +1,7 @@
 "use client";
 // "Suggest a source" (Sources page): name, URL, optional description. The server checks it automatically and answers
-// with the outcome and each check, so the user sees exactly why a source was added, queued or refused.
+// with the outcome and each check, so the user sees exactly why a source was queued for review or refused. Nothing is added automatically:
+// an operator checks the source's terms first.
 import { useEffect, useId, useRef, useState } from "react";
 
 type Check = { name: string; ok: boolean | null; detail: string };
@@ -49,7 +50,7 @@ export function SuggestSource({ signedIn }: { signedIn: boolean }) {
               </div>
             ) : (
               <form onSubmit={submit} className="grid gap-3">
-                <p className="text-ink2">Security research, AI-safety feeds, vulnerability databases or advisories. Sources with an RSS or Atom feed that allow automated reading are added automatically; others are reviewed.</p>
+                <p className="text-ink2">Security research, AI-safety feeds, vulnerability databases or advisories. Every suggestion is checked automatically, then reviewed by a person who reads the source&apos;s terms before it is added.</p>
                 <label className="grid gap-1">Source name<input name="name" required maxLength={120} placeholder="e.g. Example Lab security blog" className="border hair rounded-[6px] px-3 h-10 bg-transparent text-[calc(14px*var(--ui))]" /></label>
                 <label className="grid gap-1">URL<input name="url" type="url" required maxLength={2000} placeholder="Feed or website address" className="border hair rounded-[6px] px-3 h-10 bg-transparent text-[calc(14px*var(--ui))]" /></label>
                 <label className="grid gap-1">Description (optional)<textarea name="description" maxLength={1000} rows={2} className="border hair rounded-[6px] px-3 py-2 bg-transparent text-[calc(14px*var(--ui))]" /></label>

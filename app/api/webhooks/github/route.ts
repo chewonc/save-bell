@@ -8,6 +8,7 @@ import { env } from "@/lib/env";
 import { ingest } from "@/lib/pipeline";
 import { forgetInstallations, refreshRepo } from "@/lib/repo";
 import { ALERT_HISTORY, store } from "@/lib/store";
+import { collectable } from "@/lib/sources/terms";
 import { refreshChecks } from "@/lib/fix-apply";
 import { revokeConsents } from "@/lib/window-consent";
 
@@ -40,6 +41,8 @@ export async function POST(req: Request) {
   const payload = JSON.parse(raw) as Record<string, unknown>;
 
   if (event === "security_advisory") {
+    // Same data and licence as the GitHub Advisory Database poller: collected only once its terms are recorded.
+    if (!collectable("ghadv")) return Response.json({ ok: true, skipped: "source terms not verified" });
     const item = itemFromGHSA(payload as Parameters<typeof itemFromGHSA>[0], discovered_at);
     await store.log({ kind: "webhook", source: "github", detail: `security_advisory.${String(payload.action)} ${item.ids[0] ?? ""} ${item.title.slice(0, 60)}`, ref: delivery });
     // Push-source state: the first live delivery is the latency reference (anything published before it is backlog).

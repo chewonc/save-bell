@@ -10,6 +10,7 @@
 import type { Finding, Item } from "./schema";
 import { normUrl, sparkSearchJSON, UNTRUSTED } from "./spark";
 import { USER_AGENT } from "./ua";
+import { arxivFetch } from "./sources/arxiv-limit";
 
 export type Credibility = "verified" | "corroborated" | "unverified" | "disputed" | "likely_false";
 export type Artefact = { id: string; kind: "cve" | "ghsa" | "arxiv"; status: "exists" | "rejected" | "withdrawn" | "not_found" | "error"; registry: string; url: string; title: string | null };
@@ -76,7 +77,8 @@ async function checkGhsa(id: string): Promise<Artefact> {
 async function checkArxiv(id: string): Promise<Artefact> {
   const base: Artefact = { id: `arXiv:${id}`, kind: "arxiv", status: "error", registry: "arXiv", url: `https://arxiv.org/abs/${id}`, title: null };
   try {
-    const r = await get(`https://export.arxiv.org/api/query?id_list=${id}&max_results=1`);
+    // Shared global limiter: one arXiv request every three seconds across the feeds and this lookup.
+    const r = await arxivFetch(`https://export.arxiv.org/api/query?id_list=${id}&max_results=1`, () => ({ headers: { "user-agent": USER_AGENT }, signal: AbortSignal.timeout(15_000) }));
     if (!r.ok) return base;
     const x = await r.text();
     const entry = x.split("<entry>")[1];

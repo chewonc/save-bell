@@ -12,7 +12,7 @@ Live: https://save-bell.vercel.app · Meta Global AI Developer Hackathon (Nov 20
 Threat published → Report fact-checked → Relevant repos found → Code investigated → Impact decided → You are notified → Fix proposed / made
 ```
 
-1. **Discover.** GitHub-reviewed advisories by webhook; GitHub Advisory Database, 11 fast feeds and Hacker News every 5 min; CISA KEV every 10 min; NVD every 30 min; OSV.dev hourly with the exact package versions in your lockfiles; 10 research and news feeds hourly (arXiv cs.CR, an arXiv prompt-injection/LLM-agent query, OWASP GenAI, Trail of Bits, Snyk/Invariant Labs, Hugging Face, AI Incident Database, Mastodon infosec, Google News). Every source is labelled by how it is really monitored, with measured intervals on `/sources`.
+1. **Discover.** GitHub-reviewed advisories by webhook; GitHub Advisory Database every 5 min; CISA KEV every 10 min; NVD every 2 hours; OSV.dev hourly with the exact package versions in your lockfiles; three openly licensed research feeds hourly (arXiv cs.CR, an arXiv prompt-injection/LLM-agent query, OWASP GenAI). A source is collected only after its published terms were read and recorded (`docs/SOURCES_AUDIT.md`); other feeds are switched off. Every source is labelled by how it is really monitored, with measured intervals on `/sources`.
 2. **Fact-check the report.** Cited CVE / GHSA / arXiv ids are looked up at NVD, OSV, the GitHub Advisory Database and arXiv. Meta Muse Spark with Meta's built-in web search looks for primary sources, independent reports, copies of one origin and contradictions. A fixed rule labels the report **Verified / Corroborated / Unverified / Disputed / Likely false**. URLs the model cites but the search never returned are discarded; the model can lower a label, never raise it. Disputed or likely-false reports can never produce an "Affected" result.
 3. **Investigate your code.** Lockfile versions are checked against affected ranges in code. Muse Spark explores the repository with read-only tools (list, search, read) to find the code that decides each condition, then judges each condition with file:line citations. Every citation is re-read from the real file; unverifiable, prose-only or comment-only evidence is downgraded. The verdict (Affected / Not Affected / Unclear) comes from a fixed rule, never from the model.
 4. **Notify.** In-app notifications with unread badge, priority order (unread, confirmed, severity, time), one entry per finding and repository updated in place, Slack/Discord webhook, Web Push when VAPID keys are set.
@@ -47,7 +47,7 @@ Legend: **live** = observed on the production deployment; **local** = exercised 
 
 | Capability | Status |
 |---|---|
-| Ingestion: GHSA webhook, GitHub Advisory DB, KEV, OSV, 21 feeds, scheduled every 5 min by QStash | live |
+| Ingestion: GHSA webhook, GitHub Advisory DB, KEV, OSV, NVD and 3 openly licensed feeds, scheduled every 5 min by QStash (18 other feeds are off pending permission, see `docs/SOURCES_AUDIT.md`) | live |
 | NVD poller | deployed; first production run got HTTP 503 from NVD; works locally |
 | Report fact-check (registries + Meta web search) | live (logs on `/api/status`); 3/3 local scenarios correct: real CVE → Verified, fabricated CVE → Likely false, uncited rumour → Unverified |
 | Repository analysis, citation checks, rule verdict, notifications | live |
@@ -80,6 +80,21 @@ The consumer Meta AI app does not support third-party MCP servers, so it is not 
 - Automated fixes run in an ephemeral GitHub Actions VM with a short-lived clone token; secrets are removed from the environment before tests run; the runner cannot push.
 - Writes happen only after explicit per-fix authorization, only to files on the allowlist, and only through the GitHub App; push mode merges only after passing checks and never bypasses branch protection.
 - Advisory, feed, web and repository text is untrusted data, fenced in prompts and in MCP output (`untrusted_*`).
+
+## Data sources and attribution
+
+SaveBell collects a source only when its published terms cover automated collection, storage and display, and that review is recorded in `lib/sources/terms.ts` and `docs/SOURCES_AUDIT.md` (terms read 2026-11-18). A public RSS feed alone is not treated as permission. This is a record of published terms, not legal advice.
+
+| Source | Licence or terms | Attribution |
+|---|---|---|
+| [GitHub Advisory Database](https://github.com/advisories) (REST API and App webhook) | CC-BY 4.0 | GitHub Advisory Database, CC-BY 4.0. Each advisory links to its record at github.com/advisories. |
+| [NVD](https://nvd.nist.gov/) CVE API 2.0 | Public domain, with a requested notice | This product uses the NVD API but is not endorsed or certified by the NVD. |
+| [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | CC0 1.0 | CISA Known Exploited Vulnerabilities Catalog. Use of this data is not an endorsement by CISA. |
+| [OSV.dev](https://osv.dev/) | Each record keeps its source's licence (mostly CC-BY 4.0 or CC0) | OSV.dev; each record links to osv.dev. Chainguard (CC-BY-NC-ND) and Debian (no licence stated) records are not collected. |
+| [OWASP GenAI Security Project](https://genai.owasp.org/) | CC BY-SA 4.0 | OWASP GenAI Security Project, CC BY-SA 4.0. |
+| [arXiv](https://arxiv.org/) (cs.CR feed, search query, id lookup) | Metadata CC0 1.0 | Thank you to arXiv for use of its open access interoperability. SaveBell is not endorsed by arXiv. Requests are limited to one every three seconds. |
+
+Not collected: every other feed that was in the earlier list (oss-security, Full Disclosure, Next.js releases, Hacker News search, Embrace The Red, Simon Willison, Project Zero, CERT/CC, MSRC, Trail of Bits, GitHub Blog, Hugging Face, AI Incident Database) has no explicit permission for this use; PortSwigger, Wiz, Snyk, infosec.exchange and Google News prohibit it. Records collected from them earlier are kept in storage for review but are no longer shown or returned by any API.
 
 ## Run it
 

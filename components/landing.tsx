@@ -98,7 +98,7 @@ const ago = (iso: string | null) => {
   const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60e3));
   return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 48 * 60 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`;
 };
-const DOT = { active: "var(--observed)", delayed: "var(--inferred)", unavailable: "var(--contradicted)", not_configured: "var(--ink-3)", unknown: "var(--ink-3)" } as const;
+const DOT = { active: "var(--observed)", delayed: "var(--inferred)", unavailable: "var(--contradicted)", not_configured: "var(--ink-3)", paused: "var(--ink-3)", unknown: "var(--ink-3)" } as const;
 
 
 const Dot = ({ status }: { status: keyof typeof DOT }) => <span aria-hidden className="inline-block w-[calc(7px*var(--ui))] h-[calc(7px*var(--ui))] rounded-full shrink-0" style={{ background: DOT[status] }} />;

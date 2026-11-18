@@ -40,7 +40,7 @@ export function relevanceScore(entries: Pick<FeedEntry, "title" | "summary">[]):
   return Math.round((hits / entries.length) * 100) / 100;
 }
 
-/** Pure: final decision from the check results. Only an all-green suggestion is registered automatically. */
+/** Pure: result of the automatic checks. "registered" means all checks passed; evaluateSuggestion still sends it to manual review. */
 export function decide(c: { blocked: boolean; duplicate: boolean; reachable: boolean; robotsOk: boolean; headersOk: boolean; isFeed: boolean; entries: number; relevance: number; capacity: boolean }): { status: SuggestionStatus; reason: string } {
   if (c.duplicate) return { status: "duplicate", reason: "Already monitored or already suggested." };
   if (c.blocked) return { status: "rejected", reason: "This platform's terms or API access rules don't allow automated collection." };
@@ -73,7 +73,7 @@ async function safeGet(url: string): Promise<{ ok: boolean; status: number; url:
   return null;
 }
 
-/** Feeds added from suggestions (joined to the hourly feed group by lib/poll.ts). */
+/** Feeds added from suggestions before Nov 2026. Kept for the record; lib/poll.ts no longer collects them. */
 export async function communityFeeds(): Promise<Feed[]> { return (await kv.get<Feed[]>("feeds:community")) ?? []; }
 export async function listSuggestions(uid?: string, n = 50): Promise<Suggestion[]> { return kv.lrange<Suggestion>(uid ? `source_suggestions:${uid}` : "source_suggestions", 0, n - 1); }
 
@@ -117,15 +117,13 @@ export async function evaluateSuggestion(input: { name?: unknown; url?: unknown;
   const relevance = relevanceScore(entries.slice(0, 30));
   checks.push({ name: "About security or AI safety", ok: isFeed ? relevance >= 0.3 : null, detail: isFeed ? `${Math.round(relevance * 100)}% of recent entries` : "not assessed" });
   const capacity = community.length < MAX_COMMUNITY_FEEDS;
-  const d = decide({ blocked, duplicate, reachable, robotsOk, headersOk, isFeed, entries: entries.length, relevance, capacity });
-  const s: Suggestion = { ...base, ...d, checks, feed_url: feedUrl, relevance: isFeed ? relevance : null };
-  if (d.status === "registered" && feedUrl) {
-    const ai = entries.slice(0, 30).filter((e) => AI_SAFETY.test(`${e.title} ${e.summary.slice(0, 600)}`)).length >= entries.slice(0, 30).length / 4;
-    const feed: Feed = { id: `community-${createHash("sha256").update(key(feedUrl)).digest("hex").slice(0, 10)}`, name: name.slice(0, 80), url: feedUrl, kind: ai ? "ai_security" : "research", cadence: "slow", community: { suggested_by: uid, added_at: s.submitted_at } };
-    await kv.set("feeds:community", [...community, feed]);
-    s.feed_id = feed.id;
-  }
-  return s;
+  // Automated eligibility checks cannot establish permission to republish a feed.
+  const initialDecision = decide({ blocked, duplicate, reachable, robotsOk, headersOk, isFeed, entries: entries.length, relevance, capacity });
+  const d = initialDecision.status === "registered"
+    ? { status: "needs_review" as const, reason: "Awaiting manual verification of source terms and redistribution rights." }
+    : initialDecision;
+  // Nothing is added to monitoring here: a feed joins only after an operator has reviewed its terms.
+  return { ...base, ...d, checks, feed_url: feedUrl, relevance: isFeed ? relevance : null };
 }
 
 export async function saveSuggestion(s: Suggestion) {

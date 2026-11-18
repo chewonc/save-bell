@@ -337,7 +337,8 @@ async function buildTimelineOnce(f: Finding, items: Item[], opts: { force?: bool
   const version = timelineVersion(f, wonder);
   if (!opts.force) { const c = await kv.get<ThreatTimeline>(key(f.id)); if (c && c.version === version) return c; }
   // Feed items often carry only a summary; read the linked page (same fetcher as the pipeline: robots.txt, rate-limited).
-  const read = opts.fetchPages === false ? items : await Promise.all(items.map(async (i) => {
+  // Off by default since the source-permissions audit (docs/SOURCES_AUDIT.md); only an explicit fetchPages: true reads pages.
+  const read = opts.fetchPages !== true ? items : await Promise.all(items.map(async (i) => {
     if (i.source !== "rss" || !i.url || i.text.length >= 1500) return i;
     const p = await fetchPageText(i.url).catch(() => null);
     return p?.ok ? { ...i, text: `${i.text}
