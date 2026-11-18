@@ -8,6 +8,7 @@
 import semver from "semver";
 import { modelConditionStates } from "./analyze";
 import { versionInRanges } from "./repo";
+import { hasAI } from "./env";
 import type { Assessment, ConditionResult, Finding, Fix, FixAssessment } from "./schema";
 import { decide } from "./verdict";
 
@@ -50,7 +51,7 @@ export async function assessFix(a: Assessment, f: Finding | null, fix: Fix, befo
   const nonComputed = a.conditions.filter((c) => !c.computed);
   let after = new Map<string, { state: ConditionResult["state"]; verified: boolean; file: string | null; line: number | null; reasoning: string }>();
   let modelOk = false;
-  if (nonComputed.length && fix.files.length) {
+  if (hasAI() && nonComputed.length && fix.files.length) {
     try {
       const r = await modelConditionStates(afterFiles, `${f?.claim?.summary ?? ""}\nA proposed patch MODIFIED these files: ${[...changed].join(", ")}. The other files are unchanged and shown for context. Assess each condition against the text as shown.`, nonComputed.map(({ id, text }) => ({ id, text })), `${fix.repo}@${a.sha.slice(0, 7)} (patched)`);
       after = new Map(r.states.map((s) => [s.id, { state: s.state, verified: s.verified, file: s.file, line: s.line, reasoning: s.reasoning }]));

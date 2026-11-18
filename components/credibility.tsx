@@ -27,10 +27,10 @@ export function CredibilityPanel({ c, title = "Is this threat real?", none = "Th
   const footer = (
     <p className="text-[calc(11px*var(--ui))] text-ink2">
       Checked {c.checked_at.replace("T", " ").slice(0, 16)} UTC · registries: NVD, OSV, GitHub Advisory Database, arXiv
-      {c.model.used ? ` · Meta ${c.model.name ?? "Muse Spark"} with web search: ${c.model.searches} search(es)${c.model.discarded_urls ? `, ${c.model.discarded_urls} unseen URL(s) discarded` : ""}` : c.model.error ? ` · web search unavailable (${c.model.error.slice(0, 80)})` : " · web search not needed (official source)"}
+      {c.model.used ? ` · Meta ${c.model.name ?? "Muse Spark"} with web search: ${c.model.searches} search(es)${c.model.discarded_urls ? `, ${c.model.discarded_urls} unseen URL(s) discarded` : ""}` : c.model.error ? ` · web search unavailable (${c.model.error.slice(0, 80)})` : ""}
     </p>
   );
-  const scope = <p className="text-[calc(12px*var(--ui))] text-ink2">This is about the report itself, not about your code. Search results are treated as leads; only registry records and primary sources count as confirmation.</p>;
+  const scope = <p className="text-[calc(12px*var(--ui))] text-ink2">This is about the report itself, not about your code. Only registry records and primary sources count as confirmation.</p>;
   const claimList = claims.length > 0 && <div><div className="label mb-1">Claims checked</div><ul className="list-disc pl-5 grid gap-0.5">{claims.map((x, i) => <li key={i}>{x}</li>)}</ul></div>;
   if (collapsible) {
     // Contradictions are warnings: they stay visible; everything else is one click away.

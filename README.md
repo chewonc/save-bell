@@ -19,7 +19,23 @@ Threat published → Report fact-checked → Relevant repos found → Code inves
 5. **Show the impact.** "What happens if you don't fix this?" builds a short, hypothetical walkthrough of what a user of *your* app could experience, as screens of your app. Each step says whether it is shown in your code, inferred, or hypothetical; synthetic data only; nothing is executed.
 6. **Fix.** A preview diff with a static remediation assessment, then **Fix & create PR** (recommended) or **Fix & push**: Meta Muse Code edits a fresh clone inside an isolated GitHub Actions runner and the runner runs the repository's tests there; only after you approve that exact patch does SaveBell open a pull request (or, in push mode, merge it after the repository's own checks pass and branch protection allows). Fix & create PR has run on production (draft PR chewonc/argus-demo-api#2); Fix & push has not run yet. See Status. Or connect your own MCP-capable coding agent.
 
-## Where Meta's models do the work
+## How analysis works now (no AI on the server)
+
+Since November 18, 2026 the SaveBell server makes **no AI model calls**. It was built on the Meta Model API during the hackathon; that dependency has been removed.
+
+- **Discover and match:** advisories from vulnerability databases are matched to the exact package versions in your lockfiles, in code.
+- **Verdict:** decided by a fixed rule from the version check. Code-level conditions (for example, a route without a login check) are not analysed on the server; they show as "Possible issue" until your own AI agent checks them over MCP.
+- **Report credibility:** registry lookups and publishers, decided by rule. No web search.
+- **Timeline:** dates from registry records only.
+- **"What could happen":** a fixed template for the type of flaw, with only the version step marked as checked.
+- **Fix:** a dependency upgrade to the first patched version, drafted in code, then the same preview and approval flow.
+- **Your own AI is optional:** connect your coding agent over MCP, or, if you self-host, set `AI_BASE_URL` and `AI_MODEL` to your own OpenAI-compatible model (for example Ollama). SaveBell never stores an AI key for you.
+
+The usage that led to this change is recorded in `docs/PIVOT_BASELINE.md`.
+
+## Hackathon record: where Meta's models did the work (no longer active)
+
+The table below describes the hackathon build (October 31 to November 4, 2026). None of these model calls run any more.
 
 Evidence: **live** = observed on production; **local** = run against the real Meta Model API from a local check or dev server; **not run** = implemented and unit-tested only. Per-stage call and token counts for the current month are on `/api/status` → `meta.by_stage`.
 

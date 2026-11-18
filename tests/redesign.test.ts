@@ -104,11 +104,12 @@ test("agent tokens: hashed, resolvable, revocable", async () => {
   assert.equal(await resolveAgentToken(t), null);
 });
 
-test("hosted model calls: measured per path (model vs deterministic vs capped)", async () => {
+test("model calls: a self-hosted model is used only for code conditions; without one, nothing is sent", async () => {
   let calls = 0;
   const orig = globalThis.fetch;
-  process.env.META_API_KEY ||= "test";
-  const { env } = await import("../lib/env"); env.META_API_KEY ||= "test";
+  const { env } = await import("../lib/env");
+  const saved = { url: env.AI_BASE_URL, model: env.AI_MODEL };
+  env.AI_BASE_URL = "http://ai.test/v1"; env.AI_MODEL = "test-model"; // a self-hosted deployment with its own model
   globalThis.fetch = (async (url: string | URL) => {
     if (String(url).includes("/chat/completions")) {
       calls++;
@@ -121,20 +122,21 @@ test("hosted model calls: measured per path (model vs deterministic vs capped)",
     const repo: WatchedRepo = { repo: "o/r", default_branch: "main", subdir: "", installation_id: null, private: false, sha: "abcdef1234567890", packages: [{ ecosystem: "npm", name: "lodash", version: "4.17.20", source_file: "package-lock.json" }], tech_tags: ["express"], refreshed_at: null };
     const codeClaim = claim({ tech_tags: ["express"], conditions: [{ id: "c1", text: "uses merge on user input", role: "required", mitigation_kind: "not_applicable", source_quote: "" }] });
     const depClaim = claim({ claim_type: "dependency_vulnerability", packages: [{ ecosystem: "npm", name: "lodash", affected_ranges: ["<4.17.21"] }], conditions: [] });
-    const a1 = await assess(F(codeClaim), codeClaim, repo, { budget: true });
+    const a1 = await assess(F(codeClaim), codeClaim, repo);
     assert.equal(a1.hosted, "model");
     const afterModel = calls;
-    const a2 = await assess(F(depClaim), depClaim, repo, { budget: true });
+    const a2 = await assess(F(depClaim), depClaim, repo);
     assert.equal(a2.hosted, "deterministic"); assert.equal(a2.verdict, "Affected"); // version computed in code
     assert.ok(a2.recommendations[0].text.includes("lodash"));
-    const a3 = await assess(F(codeClaim), codeClaim, repo, { budget: false });
+    env.AI_BASE_URL = ""; env.AI_MODEL = ""; // the hosted site: no model configured
+    const a3 = await assess(F(codeClaim), codeClaim, repo);
     assert.equal(a3.hosted, "capped"); assert.equal(a3.verdict, "Unclear"); // still alerts, as "Possible issue"
     assert.equal(statusOf(a3, sev("critical"), { resolved: false, prOpen: false }).label, "Possible issue");
     assert.ok(afterModel >= 1 && afterModel <= 2, "model path: assessment (+ one agentic investigation round)");
-    assert.equal(calls, afterModel, "deterministic and capped paths make no hosted model call");
+    assert.equal(calls, afterModel, "the version-check path and the no-model path send nothing to a model");
     const used = await kv.get<number>(`usage:${new Date().toISOString().slice(0, 7)}:assessment:calls`);
     assert.ok((used ?? 0) >= 1);
-  } finally { globalThis.fetch = orig; }
+  } finally { globalThis.fetch = orig; env.AI_BASE_URL = saved.url; env.AI_MODEL = saved.model; }
 });
 
 test("MCP route: 401 without or with a bad token, 403 for a foreign browser origin, works with a valid token", async () => {

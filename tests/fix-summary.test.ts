@@ -31,10 +31,10 @@ test("in-app Verify is read-only, scoped, rate-limited and keeps earlier evidenc
   const s = readFileSync("app/api/verify/route.ts", "utf8");
   assert.match(s, /canSee\(user\.id, prev\.repo\)/, "repository visibility is checked");
   assert.match(s, /store\.claim\(`verify:/, "one run per user and finding per window");
-  assert.match(s, /hostedBudgetLeft/, "hosted budget applies");
+  assert.doesNotMatch(s, /hostedBudgetLeft|META_API_KEY/, "no hosted budget or Meta key gates a re-check: it is a version check in code");
   // The verification itself is shared with remediation windows (lib/reverify.ts): same guarantees, checked there too.
   const lib = readFileSync("lib/reverify.ts", "utf8");
-  assert.match(lib, /hostedBudgetLeft/, "hosted budget is re-checked in the shared verification");
+  assert.doesNotMatch(lib, /hostedBudgetLeft|chargeHosted/, "the shared verification charges no hosted budget");
   for (const src of [s, lib]) assert.doesNotMatch(src, /fix-apply|applyFix|createRef|pulls\.|scopedRepoOctokit|startRun/, "no repository write path");
   assert.match(lib, /:v\$\{Date\.now\(\)\.toString\(36\)\}/, "an existing assessment is never overwritten");
   const ui = readFileSync("components/fix-modal.tsx", "utf8");

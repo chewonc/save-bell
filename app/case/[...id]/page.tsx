@@ -229,7 +229,7 @@ export default async function Case({ params }: { params: Promise<{ id: string[] 
   );
 }
 
-/** Which steps Meta's model did and which steps code did, with the counts code checked. */
+/** Which steps were done by rules in code and which (if any) by a model, with the counts code checked. */
 function Provenance({ a, extracted }: { a: Assessment; extracted: number | null }) {
   const name = modelName(a.model);
   const computed = a.conditions.filter((c) => c.computed).length;
@@ -237,12 +237,12 @@ function Provenance({ a, extracted }: { a: Assessment; extracted: number | null 
   const downgraded = judged.filter((c) => /downgraded|could not be verified|returned no state/.test(c.reasoning)).length;
   const dropped = Number(a.unverified.map((u) => /^(\d+) citation\(s\) failed/.exec(u)?.[1]).find(Boolean) ?? 0);
   const steps: [string, string][] = [
-    ["Read the report", extracted == null ? "Not available" : `${name} turned the report into ${extracted} checkable code condition${extracted === 1 ? "" : "s"}.`],
+    ["Read the report", extracted == null ? "Not available" : a.model === "none" ? (extracted ? `The report lists ${extracted} code condition${extracted === 1 ? "" : "s"}; they were not analysed here.` : "Affected packages and version ranges were taken from the vulnerability database record. No AI model was used.") : `${name} turned the report into ${extracted} checkable code condition${extracted === 1 ? "" : "s"}.`],
     ["Version check", computed ? `${computed} package version condition${computed === 1 ? "" : "s"} computed in code from your lockfile.` : "No package version to compute."],
     ...(a.investigation ? [["Investigate", a.investigation.steps ? `${modelName(a.investigation.model)} explored the repository with read-only tools in ${a.investigation.steps} step${a.investigation.steps === 1 ? "" : "s"} (${a.investigation.tools.slice(0, 6).join(" → ")})${a.investigation.added.length ? ` and added ${a.investigation.added.map((p) => p.split("/").pop()).join(", ")} to the evidence` : ""}.` : a.investigation.rationale] as [string, string]] : []),
-    ["Read your code", a.model === "none" ? (a.hosted === "capped" ? "Skipped: monthly analysis budget reached." : "Not needed: version check only.") : `${name} judged ${judged.length} condition${judged.length === 1 ? "" : "s"} against the cited files and pointed to ${a.locations.length + dropped} line${a.locations.length + dropped === 1 ? "" : "s"}.`],
+    ["Read your code", a.model === "none" ? (a.hosted === "capped" ? "Not analysed: SaveBell runs without an AI model. Your own AI agent can check the code conditions." : "Not needed: version check only.") : `${name} judged ${judged.length} condition${judged.length === 1 ? "" : "s"} against the cited files and pointed to ${a.locations.length + dropped} line${a.locations.length + dropped === 1 ? "" : "s"}.`],
     ["Proof check", a.model === "none" ? "Not run" : `Code checked every cited line against the real file: ${a.locations.length} kept, ${dropped} rejected${downgraded ? `, ${downgraded} condition${downgraded === 1 ? "" : "s"} downgraded to Unknown` : ""}.`],
-    ["Verdict", `${a.verdict}, decided by a fixed rule in code, never by the model.`],
+    ["Verdict", `${a.verdict}, decided by a fixed rule in code, never by a model.`],
   ];
   return (
     <ol className="grid gap-1.5 text-[calc(13px*var(--ui))]">

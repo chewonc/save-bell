@@ -9,7 +9,8 @@ import { refreshRepo } from "./repo";
 import type { Finding, Item, WatchedRepo } from "./schema";
 import { store } from "./store";
 import { feedOf, itemBlocked } from "./sources/gate";
-import { chargeHosted, hostedBudgetLeft } from "./usage";
+import { hasAI } from "./env";
+import { ruleClaim, ruleClaimVersion } from "./claim-rules";
 import { buildTimeline } from "./timeline";
 import { verifyFinding } from "./verify";
 
@@ -81,16 +82,20 @@ export async function processFinding(id: string, opts: { replayed?: boolean; onl
       await store.log({ kind: "process", source: "prefilter", detail: `checked, not relevant to watched stacks: ${f.title.slice(0, 60)}`, ref: f.id, ms: Date.now() - t0 });
       return;
     }
-    // Credibility of the report (artefact lookups + Meta web-search adjudication), cached per text version.
+    // Credibility of the report (registry lookups and publishers, decided by rule), cached per text version.
     const version = sha(text);
     if (f.credibility?.version !== version) {
-      f.credibility = await verifyFinding(f, items, text, version, { useModel: !!process.env.META_API_KEY && process.env.AW_VERIFY_MODEL !== "0" }).catch((e) => { void store.log({ kind: "error", source: "verify", detail: String(e).slice(0, 200), ref: f.id }); return f.credibility ?? null; });
+      f.credibility = await verifyFinding(f, items, text, version).catch((e) => { void store.log({ kind: "error", source: "verify", detail: String(e).slice(0, 200), ref: f.id }); return f.credibility ?? null; });
       if (f.credibility) await store.log({ kind: "process", source: "verify", detail: `credibility ${f.credibility.label}: ${f.credibility.reason}`.slice(0, 200), ref: f.id });
     }
-    // Claim extraction, cached by text hash
-    if (f.claim_version !== version || !f.claim) {
-      const { claim } = await extractClaim(text);
-      f.claim = claim; f.claim_version = version; f.extracted_at = new Date().toISOString();
+    // The claim. With no model configured (always, on the hosted site) it is built by rules from the registries' own
+    // structured data, and its version changes only when the packages or ranges change: another feed repeating the
+    // same advisory does not re-assess every repository. A self-hosted deployment with a model extracts it from the
+    // text instead, cached by text hash.
+    const claimVersion = hasAI() ? version : ruleClaimVersion(items);
+    if (f.claim_version !== claimVersion || !f.claim) {
+      const claim = hasAI() ? (await extractClaim(text)).claim : ruleClaim(items);
+      f.claim = claim; f.claim_version = claimVersion; f.extracted_at = new Date().toISOString();
       if (!claim.actionable) {
         f.status = "not_actionable"; await store.putFinding(f);
         await store.log({ kind: "process", source: "extract", detail: `not actionable: ${claim.not_actionable_reason ?? ""}`.slice(0, 160), ref: f.id, ms: Date.now() - t0 });
@@ -110,19 +115,17 @@ export async function processFinding(id: string, opts: { replayed?: boolean; onl
     if (!matched.length && opts.onlyRepo) { await store.log({ kind: "process", source: "backfill", detail: `${opts.onlyRepo}: no package or stack match for ${f.title.slice(0, 50)}`, ref: f.id }); return; }
     if (!matched.length) { f.status = "not_relevant"; await store.putFinding(f); await store.log({ kind: "process", source: "match", detail: "claim extracted; no watched repo matches", ref: f.id, ms: Date.now() - t0 }); return; }
     // Stages 3–6 + alert, per matched repo (skip if an identical assessment exists)
-    // Assess matched repos with bounded concurrency (3): the model call dominates L3, so repos no longer wait in line.
+    // Assess matched repos with bounded concurrency (3).
     const todo = matched;
     const runOne = async (r: WatchedRepo) => {
       const aid = `${f.id}:${r.repo}${r.subdir ? "/" + r.subdir : ""}:${r.sha!.slice(0, 12)}:${f.claim_version}`;
       if (!opts.replayed && (await store.getAssessment(aid))) return;
-      const key = store.repoKey(r);
       // A disputed or likely-false report is assessed at the lowest tier: it can never become "Affected".
       const cred = f.credibility?.label;
       const fx = cred === "disputed" || cred === "likely_false" || (cred === "unverified" && f.tier === "corroborated") ? { ...f, tier: "signal" as const } : f;
-      let a = await assess(fx, f.claim!, r, { replayed: opts.replayed, items, budget: await hostedBudgetLeft(key) });
+      let a = await assess(fx, f.claim!, r, { replayed: opts.replayed, items });
       // Withdrawn by its registry: the alert is retracted. It can never stay "Affected"; users see "Advisory withdrawn".
       if (f.withdrawn_at) a = { ...a, withdrawn_at: f.withdrawn_at, verdict: a.verdict === "Affected" ? "Unclear" : a.verdict, verdict_reason: `Advisory withdrawn by its registry on ${f.withdrawn_at.slice(0, 10)}. ${a.verdict_reason}` };
-      if (a.hosted === "model" && a.model !== "none") await chargeHosted(key);
       if (a.verdict === "Affected" || a.verdict === "Unclear") a = await sendAlert(a); else await store.putAssessment(a);
       await notifyAssessment(a, f, items).catch((e) => store.log({ kind: "error", source: "notify", detail: String(e).slice(0, 200), ref: a.id }));
     };

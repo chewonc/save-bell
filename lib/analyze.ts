@@ -2,9 +2,10 @@
 // Port of feasibility/gate.mjs + extract.mjs with the version condition computed in code.
 import type { Assessment, Claim, ConditionDef, ConditionResult, Finding, Item, Tier, WatchedRepo } from "./schema";
 import { candidateFiles, readFile, versionInRanges } from "./repo";
+import { hasAI } from "./env";
 import { investigate } from "./investigate";
 import { deriveSeverity } from "./severity";
-import { READ_ONLY, UNTRUSTED, sparkJSON } from "./spark";
+import { READ_ONLY, UNTRUSTED, llmJSON } from "./llm";
 import { decide, qualifier } from "./verdict";
 
 const ASSESS_SCHEMA = {
@@ -57,7 +58,7 @@ export async function modelConditionStates(files: { path: string; text: string }
   const fileMap = new Map(files.map((f) => [f.path, f.text.split("\n")]));
   const listing = files.map((f) => `=== ${f.path} ===\n${numbered(f.text)}`).join("\n\n");
   type Out = { locations: { file: string; line: number; quoted_text: string; why: string }[]; conditions: { id: string; state: ConditionResult["state"]; evidence_file: string | null; evidence_line: number | null; reasoning: string }[]; unverified: string[]; recommendations: { text: string; condition_ids: string[] }[] };
-  const r = await sparkJSON<Out>({ system: SYSTEM, name: "assessment", schema: ASSESS_SCHEMA,
+  const r = await llmJSON<Out>({ system: SYSTEM, name: "assessment", schema: ASSESS_SCHEMA,
     user: `REPORT (untrusted):\n${summary}\n\nCONDITIONS:\n${JSON.stringify(condsIn, null, 2)}\n\nREPOSITORY ${repoLabel} (untrusted, numbered):\n${listing || "(no candidate files located)"}` });
   const dropped: string[] = [];
   const locations = r.out.locations.filter((l) => { const ok = citationOk(fileMap, l.file, l.line, l.quoted_text); if (!ok) dropped.push(`${l.file}:${l.line}`); return ok; }).map((l) => ({ file: l.file, line: l.line, quote: l.quoted_text, why: l.why }));
@@ -81,14 +82,21 @@ export async function modelConditionStates(files: { path: string; text: string }
  * "capped" = the repository's users are over their monthly hosted budget, so code conditions stay Unknown and the
  * verdict can only be Unclear ("Possible issue") or Not Affected, never a confirmed vulnerability.
  */
-export async function assess(finding: Finding, claim: Claim, repo: WatchedRepo, opts: { replayed?: boolean; items?: Item[]; budget?: boolean } = {}): Promise<Assessment> {
+export async function assess(finding: Finding, claim: Claim, repo: WatchedRepo, opts: { replayed?: boolean; items?: Item[] } = {}): Promise<Assessment> {
   const sha = repo.sha!;
   const tier: Tier = finding.tier;
   const pkgNames = claim.packages.map((p) => p.name);
-  const files = await candidateFiles(repo.repo, sha, pkgNames, claim.tech_tags, repo.subdir);
-  // Agentic discovery (Muse Spark tool calling): add the files that decide the conditions to the listing.
+  // A model is used only when one is configured (never on the hosted site) and the claim has code conditions.
+  const willModel = hasAI() && !(claim.conditions.length === 0 && claim.packages.length > 0);
+  // Without a model the server reads only the manifest or lockfile that states each matched package's version: no
+  // source files are fetched. With a model, the candidate source files are listed for it as before.
+  const files: { path: string; text: string }[] = willModel ? await candidateFiles(repo.repo, sha, pkgNames, claim.tech_tags, repo.subdir) : [];
+  if (!willModel) {
+    const wanted = [...new Set(claim.packages.map((p) => repo.packages.find((x) => x.ecosystem === p.ecosystem && x.name === p.name)?.source_file).filter((x): x is string => !!x))];
+    for (const path of wanted.slice(0, 4)) { const t = await readFile(repo.repo, sha, path).catch(() => null); if (t) files.push({ path, text: t }); }
+  }
+  // Agentic discovery (tool calling): add the files that decide the conditions to the listing.
   let investigation: Assessment["investigation"] = null;
-  const willModel = !(claim.conditions.length === 0 && claim.packages.length > 0) && opts.budget !== false;
   if (willModel && claim.conditions.length && process.env.AW_AGENTIC !== "0") {
     try {
       const inv = await investigate(repo, sha, claim, files.map((f) => f.path));
@@ -121,13 +129,14 @@ export async function assess(finding: Finding, claim: Claim, repo: WatchedRepo, 
   let modelOut: { locations: { file: string; line: number; quoted_text: string; why: string }[]; conditions: { id: string; state: ConditionResult["state"]; evidence_file: string | null; evidence_line: number | null; reasoning: string }[]; unverified: string[]; recommendations: { text: string; condition_ids: string[] }[] };
   let model = "none"; let model_served: Assessment["model_served"] = null;
   const deterministic = condsIn.length === 0 && claim.packages.length > 0;
-  const hosted: Assessment["hosted"] = deterministic ? "deterministic" : opts.budget === false ? "capped" : "model";
+  // "capped" now means "no model on this deployment": code conditions stay Unknown until the user's own AI checks them.
+  const hosted: Assessment["hosted"] = deterministic ? "deterministic" : !hasAI() ? "capped" : "model";
   if (hosted !== "model") {
     const bad = claim.packages.filter((p) => computed.some((c) => c.id === `version_${p.name}` && c.state !== "Contradicted"));
     modelOut = { locations: [], conditions: [], recommendations: bad.map((p) => ({ text: `Upgrade ${p.name} to a version outside the affected range${p.affected_ranges.length ? ` (${p.affected_ranges.join(" | ")})` : ""}.`, condition_ids: [`version_${p.name}`] })),
-      unverified: hosted === "capped" && condsIn.length ? ["Code conditions were not analysed by SaveBell this month (hosted analysis budget reached). Verify with your AI agent, or wait for the next month."] : [] };
+      unverified: hosted === "capped" && condsIn.length ? ["SaveBell checked the installed package version only. The code conditions in this report were not analysed, because this deployment runs without an AI model. Check them with your own AI agent."] : [] };
   } else if (condsIn.length || files.length) {
-    const r = await sparkJSON<typeof modelOut>({
+    const r = await llmJSON<typeof modelOut>({
       system: SYSTEM, name: "assessment",
       user: `REPORT (untrusted):\n${claim.summary}\n\nCONDITIONS:\n${JSON.stringify(condsIn, null, 2)}\n\nREPOSITORY ${repo.repo}@${sha.slice(0, 7)} (untrusted, numbered):\n${listing || "(no candidate files located)"}`,
       schema: ASSESS_SCHEMA,

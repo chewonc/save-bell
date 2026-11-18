@@ -53,7 +53,6 @@ export const windowDeps = (): Deps => ({
   async verify(assessmentId) {
     const prev = await store.getAssessment(assessmentId);
     if (!prev) throw new Precondition("assessment not found");
-    if (!env.META_API_KEY) throw new Precondition("verification is not available on this deployment (the Meta model is not configured)");
     const { assessment } = await reverify(prev, "window");
     return { id: assessment.id, verdict: assessment.verdict, verified: isVerified(assessment) };
   },

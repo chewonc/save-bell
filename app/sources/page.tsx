@@ -92,7 +92,7 @@ export async function SourceCoverage({ embedded = false }: { embedded?: boolean 
         <Bullets>
           <li>OSV.dev is queried hourly with the exact package versions in your lockfiles.</li>
           <li>Each report that could affect a watched repository is fact-checked once against NVD, OSV, the GitHub Advisory Database and arXiv.</li>
-          <li>Meta Muse Spark web search looks for primary sources and contradictions.</li>
+          <li>The credibility label comes from those registry lookups and from who published the report. No AI model or web search is used.</li>
         </Bullets>
       </Group>
 

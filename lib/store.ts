@@ -234,6 +234,8 @@ export const store = {
   recentLog: (n = 200) => kv.lrange<LogEntry>(K.log, 0, n - 1),
   /** daily QStash message counter (free tier: 1,000/day) */
   countMessage: () => kv.incr(K.daily(new Date().toISOString().slice(0, 10))),
+  /** Queue messages published today (read-only; for the status endpoint). */
+  messagesToday: async () => (await kv.get<number>(K.daily(new Date().toISOString().slice(0, 10)))) ?? 0,
 
   // ---- users / installations / per-user repos ----------------------------
   async putUser(u: User) { await kv.set(K.user(u.id), u); await kv.sadd(K.users, u.id); },

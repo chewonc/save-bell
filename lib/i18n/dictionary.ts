@@ -1,5 +1,5 @@
 // English source strings for the UI. Korean ships as a reviewed static dictionary (lib/i18n/ko.ts); other languages are
-// machine-translated at request time by Meta Muse Spark (or Google Cloud Translation when its key is set) and cached.
+// translated at request time only when a deployment configures a translation backend (lib/i18n/translate.ts); otherwise English.
 export const en = {
   nav_watch: "Watch", nav_repos: "Repositories", nav_monitoring: "Monitoring status", nav_activity: "Activity log", nav_sources: "Sources", nav_alerts: "Alerts", nav_threats: "Threats", nav_report: "Report", nav_settings: "Settings", sign_in: "Sign in with GitHub", sign_out: "Sign out", sign_in_not_configured: "sign-in not configured",
   headline: "What touched your code.",
@@ -46,7 +46,7 @@ export const en = {
   signin_continue: "Sign in to continue", open_your_alerts: "Open your threats", signin_unconfigured: "Sign-in is not configured on this deployment yet.", read_only_note: "Read-only · nothing changes without your approval",
   how_it_works: "How it works",
   step1_t: "A new threat is published", step1_d: "SaveBell follows security advisories, vulnerability databases, research papers and security news around the clock, and fact-checks each report.",
-  step2_t: "Checked against your code", step2_d: "Meta Muse Spark reads the threat and the code that matters and cites the exact lines; versions are checked from your lockfile. Nothing is run.",
+  step2_t: "Checked against your code", step2_d: "SaveBell compares each advisory's affected versions with the exact versions in your lockfile, in code. No AI model runs on our servers, and nothing from your repository is run.",
   step3_t: "You get a plain alert", step3_d: "What's wrong, where, and how sure we are. Unconfirmed issues are clearly marked as possible.",
   step4_t: "Fix it with your approval", step4_d: "Open the exact line on GitHub, or let your own AI coding agent fix it in your editor.",
   pillar1_t: "Evidence, not guesses", pillar1_d: "SaveBell identifies the affected code and shows the evidence behind each finding.",
@@ -61,7 +61,7 @@ export const en = {
   act_title: "Activity log", act_intro: "What SaveBell has been doing in the background.", act_empty: "No activity yet.", act_times: "times",
   mon_title: "Monitoring status", mon_ok: "SaveBell is checking new security threats against your repositories.", mon_errors: "Some checks had problems in the last hour. Monitoring continues and retries automatically.",
   mon_your_repos: "Your repositories", mon_last_check: "Last check", mon_waiting: "Waiting for first check", mon_no_repos: "No repositories yet.", mon_add_one: "Add one",
-  mon_ai_month: "AI analysis this month", mon_threats_read: "Threats read by Meta Muse Spark", mon_code_checks: "Code checks by Meta Muse Spark", mon_included: "Your included code checks", mon_unlimited: "Unlimited", mon_used_of: "{n} of {cap} used",
+  mon_ai_month: "How threats are checked", mon_threats_read: "Threats read by the model", mon_code_checks: "Code checks by the model", mon_included: "Your included code checks", mon_unlimited: "Unlimited", mon_used_of: "{n} of {cap} used",
   mon_cleared: "Threats checked that don't affect you", mon_none_yet: "None yet.", mon_advanced: "Advanced diagnostics", mon_raw_log: "Raw pipeline log", mon_not_affected: "Not affected",
   monitored_repos: "Monitored repositories", no_repos_selected: "No repositories selected", no_repos_selected_body: "Choose at least one repository in the filter to see its findings.", show_all_repos: "Show all repositories",
   push_threshold_label: "Browser push for", push_threshold_all: "All alerts", push_threshold_moderate: "Moderate and above", push_threshold_high: "High and critical only", push_threshold_critical: "Critical only",

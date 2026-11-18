@@ -9,8 +9,11 @@ import { assessFix } from "./fixassess";
 import { LOCKFILES, readFile, tree } from "./repo";
 import { permalink, provenanceOf } from "./remediation";
 import { patchVersion } from "./remediation-control";
-import { READ_ONLY, UNTRUSTED, sparkJSON } from "./spark";
+import { READ_ONLY, UNTRUSTED, llmJSON } from "./llm";
 import { store } from "./store";
+import semver from "semver";
+import { hasAI } from "./env";
+import { patchedVersions } from "./claim-rules";
 
 const FIX_SCHEMA = {
   type: "object", additionalProperties: false, required: ["summary", "caveats", "hunks"],
@@ -66,6 +69,51 @@ export function syntaxCheck(path: string, text: string): { path: string; ok: boo
   return { path, ok: true, label: "not checked (no parser for this file type)", errors: [] };
 }
 
+/**
+ * Pure: a dependency upgrade drafted in code, with no model. For each package the advisory names and the version check
+ * did not clear, raise the version declared in package.json or requirements.txt to the lowest patched version a
+ * registry states. Anything else (code changes, packages installed only through another package) is left to the user
+ * or their own AI agent, and said so in the caveats.
+ */
+export function ruleFix(a: Assessment, f: Finding | null, items: Item[], before: Map<string, string>): { summary: string; caveats: string[]; hunks: FixHunk[] } {
+  const hunks: FixHunk[] = []; const caveats: string[] = []; const done: string[] = [];
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  for (const p of f?.claim?.packages ?? []) {
+    const cid = `version_${p.name}`;
+    const c = a.conditions.find((x) => x.id === cid);
+    if (!c || c.state === "Contradicted") continue; // not installed, or already outside the affected range
+    const installed = a.dependency?.name === p.name ? a.dependency.version : null;
+    const inst = installed ? semver.coerce(installed)?.version ?? null : null;
+    const candidates = patchedVersions(items, p.ecosystem, p.name).filter((v) => semver.valid(semver.coerce(v))).sort((x, y) => semver.compare(semver.coerce(x)!, semver.coerce(y)!));
+    const target = candidates.find((v) => !inst || semver.gt(semver.coerce(v)!, inst)) ?? null;
+    if (!target) { caveats.push(`No patched version of ${p.name} is listed by a vulnerability database yet, so no upgrade could be drafted.`); continue; }
+    let made = false;
+    for (const [path, text] of before) {
+      const base = path.split("/").pop();
+      if (base === "package.json" && p.ecosystem === "npm") {
+        const m = text.match(new RegExp(`^([ \\t]*"${esc(p.name)}"[ \\t]*:[ \\t]*")([^"\\n]*)(".*)$`, "m"));
+        if (!m) continue;
+        const spec = m[2].trim();
+        const pre = /^(\^|~|>=)?\s*v?\d/.test(spec) ? (spec.match(/^(\^|~)/)?.[1] ?? "") : null;
+        if (pre == null) { caveats.push(`${p.name} is declared as "${spec}" in ${path}, which is not a plain version, so it was left unchanged.`); continue; }
+        hunks.push({ path, search: m[0], replace: `${m[1]}${pre}${target}${m[3]}`, rationale: `Raise ${p.name} from ${spec} to ${pre}${target}, the first version the advisory lists as patched.`, addresses: "root_cause", condition_ids: [cid] });
+        made = true; break;
+      }
+      if (base === "requirements.txt" && p.ecosystem === "pypi") {
+        const m = text.match(new RegExp(`^(${esc(p.name)}[ \\t]*==[ \\t]*)([0-9][^\\s;#]*)(.*)$`, "mi"));
+        if (!m) continue;
+        hunks.push({ path, search: m[0], replace: `${m[1]}${target}${m[3]}`, rationale: `Raise ${p.name} from ${m[2]} to ${target}, the first version the advisory lists as patched.`, addresses: "root_cause", condition_ids: [cid] });
+        made = true; break;
+      }
+    }
+    if (made) done.push(`${p.name} to ${target}`);
+    else if (!caveats.some((x) => x.includes(p.name))) caveats.push(`${p.name} is not declared in package.json or requirements.txt here: it is installed through another package. Update the package that depends on it, or add an override.`);
+  }
+  if (hunks.length) caveats.unshift("The lockfile must be regenerated and installed for the new version to take effect.", "Drafted by a rule from the advisory's patched version, without an AI model. Check the package's release notes for breaking changes.");
+  else if (!caveats.length) caveats.push("No automatic fix is available for this alert without an AI model. Use your own AI agent or fix it by hand.");
+  return { summary: hunks.length ? `Upgrade ${done.join(", ")}: the lowest version the advisory lists as patched.` : "", caveats, hunks };
+}
+
 export async function draftFix(a: Assessment, f: Finding | null, items: Item[], userId: string): Promise<Fix> {
   const repoFull = a.repo.split("/").slice(0, 2).join("/");
   const id = createHash("sha256").update(`${a.id}:${userId}:${Date.now()}`).digest("hex").slice(0, 16);
@@ -88,8 +136,10 @@ export async function draftFix(a: Assessment, f: Finding | null, items: Item[], 
   const conds = a.conditions.map((c) => `- ${c.id} [${c.state}${c.computed ? ", computed" : ""}] ${c.text}${c.evidence[0] ? ` (evidence ${c.evidence[0].file}:${c.evidence[0].line ?? "?"})` : ""}`).join("\n");
   const listing = [...before.entries()].map(([p, t]) => `=== ${p} ===\n${t.split("\n").map((l, i) => `${i + 1}| ${l}`).join("\n")}`).join("\n\n");
   let out: { summary: string; caveats: string[]; hunks: FixHunk[] }; let model = "none";
-  try {
-    const r = await sparkJSON<typeof out>({ system: `${READ_ONLY}\n${UNTRUSTED}\n${FIX_RULES}`, name: "fix", schema: FIX_SCHEMA,
+  // No model configured (always, on the hosted site): the only fix drafted is a dependency upgrade computed in code.
+  if (!hasAI()) { out = ruleFix(a, f, items, before); model = "rules"; }
+  else try {
+    const r = await llmJSON<typeof out>({ system: `${READ_ONLY}\n${UNTRUSTED}\n${FIX_RULES}`, name: "fix", schema: FIX_SCHEMA,
       user: `FINDING ${f?.ids.join(", ") ?? a.finding_id}: ${f?.title ?? ""}\nSUMMARY (untrusted): ${f?.claim?.summary ?? ""}\nVERDICT: ${a.verdict} (${a.tier})\n\nCONDITIONS (states assigned by SaveBell):\n${conds}\n\nRECOMMENDED STEPS:\n${recs || "(none)"}\n\nFILES (untrusted, numbered; edit only these):\n${listing.slice(0, 120000)}` });
     out = r.out; model = r.model;
   } catch (e) { return { ...base, status: "failed", model, error: `model call failed: ${String(e).slice(0, 200)}` }; }
@@ -103,7 +153,7 @@ export async function draftFix(a: Assessment, f: Finding | null, items: Item[], 
   }
   for (const h of out.hunks) if (!before.has(h.path)) rejected.push({ ...h, reason: "path is not one of the cited files" });
   const syntax = files.map((x) => syntaxCheck(x.path, x.after));
-  const fix: Fix = { ...base, status: files.length ? "drafted" : "failed", summary: out.summary, caveats: out.caveats, files, rejected_hunks: rejected, syntax_check: syntax, model, error: files.length ? null : "The model produced no applicable hunks (see rejected hunks)." };
+  const fix: Fix = { ...base, status: files.length ? "drafted" : "failed", summary: out.summary, caveats: out.caveats, files, rejected_hunks: rejected, syntax_check: syntax, model, error: files.length ? null : model === "rules" ? (out.caveats[0] ?? "No automatic fix is available for this alert without an AI model. Use your own AI agent or fix it by hand.") : "The model produced no applicable hunks (see rejected hunks)." };
   // Version of exactly what the user will review; an approval must name it (lib/write-auth.ts).
   if (files.length) fix.patch_version = patchVersion(files);
   if (files.length) fix.assessment = await assessFix(a, f, fix, before).catch((e) => ({ label: "not_assessable" as const, summary: `assessment failed: ${String(e).slice(0, 160)}`, coverage: [], predicted_verdict: null, predicted_reason: null, version_check: null, risk_flags: [], model_judgement: [], uncertain: ["static assessment did not run"], verification_required: ["review the diff manually"] }));
