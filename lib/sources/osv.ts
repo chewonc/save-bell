@@ -4,6 +4,7 @@
 // package coordinates so matching is exact (no keyword matching involved).
 import { sha } from "../dedup";
 import type { Item, WatchedRepo } from "../schema";
+import { osvRanges } from "../claim-rules";
 
 const ECO: Record<string, string> = { npm: "npm", pypi: "PyPI", go: "Go", cargo: "crates.io", maven: "Maven", rubygems: "RubyGems" };
 type OsvVuln = { id: string; summary?: string; details?: string; aliases?: string[]; modified: string; published?: string; withdrawn?: string;
@@ -53,6 +54,8 @@ export function itemFromOsv(v: OsvVuln, discovered_at: string): Item {
     packages: [...new Map(pkgs.map((p) => [`${p.ecosystem}:${p.name}`, p])).values()],
     published_at: v.published ?? v.modified,
     discovered_at,
-    raw: { severity: v.database_specific?.severity ?? null, withdrawn: v.withdrawn ?? null },
+    // `affected` keeps the structured ranges so a claim can be built in code (lib/claim-rules.ts), without a model.
+    raw: { severity: v.database_specific?.severity ?? null, withdrawn: v.withdrawn ?? null,
+      affected: (v.affected ?? []).filter((a) => a.package).map((a) => { const ev = (a.ranges ?? []).filter((r) => r.type !== "GIT").map((r) => osvRanges(r.events)); return { ecosystem: a.package!.ecosystem, name: a.package!.name, ranges: ev.flatMap((x) => x.ranges), fixed: ev.flatMap((x) => x.fixed) }; }) },
   };
 }

@@ -20,6 +20,8 @@ export async function POST(req: Request) {
   const body = (await req.json()) as { op: string; [k: string]: unknown };
   const t0 = Date.now();
   switch (body.op) {
+    // Read-only: how many stored records come from sources that are now disabled or removed. Changes nothing.
+    case "source_audit": return Response.json({ ok: true, audit: await (await import("@/lib/sources/audit")).sourceAudit(), ms: Date.now() - t0 });
     case "watch": {
       const w = WatchedRepo.parse({ repo: body.repo, default_branch: body.default_branch ?? "main", subdir: body.subdir ?? "", label: body.label });
       let r;

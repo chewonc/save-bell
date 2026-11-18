@@ -8,16 +8,16 @@ import { FEEDS, fetchFeed, itemFromEntry, type Feed } from "./sources/rss";
 import { fetchNvd, itemFromNvd } from "./sources/nvd";
 import { getVuln, itemFromOsv, queriesFor, queryBatch } from "./sources/osv";
 import { store } from "./store";
-import { communityFeeds } from "./source-suggest";
+import { collectable } from "./sources/terms";
 
 export type SourceClass = "push" | "near_realtime" | "periodic";
 export type Poller = { id: string; name: string; cls: SourceClass; interval_min: number };
 export const POLLERS: Poller[] = [
   { id: "ghadv", name: "GitHub Advisory Database (REST)", cls: "near_realtime", interval_min: 5 },
-  { id: "rss", name: `Fast feeds (${FEEDS.filter((f) => f.cadence === "fast").length})`, cls: "near_realtime", interval_min: 5 },
+  { id: "rss", name: `Fast feeds (${FEEDS.filter((f) => f.cadence === "fast" && collectable(f.id)).length})`, cls: "near_realtime", interval_min: 5 },
   { id: "kev", name: "CISA Known Exploited Vulnerabilities", cls: "periodic", interval_min: 10 },
-  { id: "rss-slow", name: `Slow feeds (${FEEDS.filter((f) => f.cadence === "slow").length})`, cls: "periodic", interval_min: 60 },
-  { id: "nvd", name: "NVD CVE API 2.0 (software / AI-relevant CVEs)", cls: "periodic", interval_min: 30 },
+  { id: "rss-slow", name: `Slow feeds (${FEEDS.filter((f) => f.cadence === "slow" && collectable(f.id)).length})`, cls: "periodic", interval_min: 60 },
+  { id: "nvd", name: "NVD CVE API 2.0 (software / AI-relevant CVEs)", cls: "periodic", interval_min: 120 }, // NVD asks automated lastMod polling to run no more than once every two hours
   { id: "osv", name: "OSV.dev, queried with your installed package versions", cls: "periodic", interval_min: 60 },
 ];
 export const TICK_MIN = 5;
@@ -72,6 +72,12 @@ export async function runSource(id: string): Promise<{ ok: boolean; source: stri
   const st = await loadState(id, now);
   let ingested = 0, created = 0, note: string | undefined;
   const errors: string[] = [];
+  // Source-permissions policy (docs/SOURCES_AUDIT.md): a source is collected only after its published terms were read
+  // and recorded in lib/sources/terms.ts. Anything else is skipped without a request being sent.
+  if (!id.startsWith("rss") && !collectable(id)) {
+    await store.setPollState(id, st);
+    return { ok: true, source: id, ingested: 0, created: 0, ms: Date.now() - t0, state: st, note: "not collected: source terms not verified" };
+  }
   try {
     if (id === "kev") {
       const r = await fetchKEV(st.etag);
@@ -129,6 +135,8 @@ export async function runSource(id: string): Promise<{ ok: boolean; source: stri
         let fetched = 0;
         for (const [vid, modified] of ids) {
           if (fetched >= 25) break; // bounded per run; the rest is picked up next hour
+          // OSV records keep their source's licence. Chainguard/Wolfi is CC-BY-NC-ND and Debian states none: not collected.
+          if (/^(CGA-|DSA-|DLA-|DTSA-|DEBIAN-)/i.test(vid)) continue;
           const key = `${vid}:${modified}`;
           if (!(await store.markSeen("osv", key))) continue;
           const v = await getVuln(vid).catch(() => null); fetched++;
@@ -140,14 +148,18 @@ export async function runSource(id: string): Promise<{ ok: boolean; source: stri
         note = `${qs.length} package version(s) queried, ${ids.size} known vulnerability id(s), ${fetched} fetched`;
       }
     } else if (id === "rss" || id === "rss-slow") {
-      // Hourly group also carries community feeds that passed the automatic checks (lib/source-suggest.ts).
-      const extra = id === "rss-slow" ? await communityFeeds().catch(() => []) : [];
-      const r = await pollFeeds([...FEEDS.filter((f) => (id === "rss" ? f.cadence === "fast" : f.cadence === "slow")), ...extra], now, !st.last_ok);
+      // Do not automatically ingest community-submitted third-party feeds: robots.txt
+      // and RSS availability are not sufficient proof of redistribution permission.
+      // Re-enable only after a human-reviewed source allowlist is implemented.
+      const extra: Feed[] = [];
+      const group = [...FEEDS.filter((f) => (id === "rss" ? f.cadence === "fast" : f.cadence === "slow")), ...extra];
+      const allowed = group.filter((f) => collectable(f.id));
+      const r = await pollFeeds(allowed, now, !st.last_ok);
       ingested = r.ingested; created = r.created;
-      note = `${r.not_modified} feed(s) unchanged${r.errors.length ? `; ${r.errors.length} feed(s) failed: ${r.errors.join("; ")}` : ""}`.slice(0, 300);
+      note = `${group.length - allowed.length ? `${group.length - allowed.length} feed(s) not collected (terms not verified); ` : ""}${r.not_modified} feed(s) unchanged${r.errors.length ? `; ${r.errors.length} feed(s) failed: ${r.errors.join("; ")}` : ""}`.slice(0, 300);
       if (r.errors.length) await store.log({ kind: "error", source: id, detail: `feeds failed: ${r.errors.join("; ")}`.slice(0, 300) });
       // The source is degraded only when most of its feeds fail; a single flaky feed is reported in the note and the log.
-      const total = FEEDS.filter((f) => (id === "rss" ? f.cadence === "fast" : f.cadence === "slow")).length;
+      const total = allowed.length;
       if (r.errors.length * 2 > total) errors.push(...r.errors);
     } else throw new Error(`unknown source ${id}`);
     st.last_ok = now; st.first_ok ??= now; st.last_error = errors.length ? errors.join("; ").slice(0, 200) : null;

@@ -69,7 +69,7 @@ export function SimulateImpact({ assessmentId, repo, sha, title = "What happens 
             <span className="text-[calc(12px*var(--ui))] text-ink2">{Math.min(i + 1, total)} / {total} · arrow keys work</span>
             <button className="btn-ghost ml-auto" onClick={() => run(true)} disabled={busy}>{busy ? "Rebuilding…" : "Rebuild"}</button>
           </div>
-          <p className="text-[calc(11px*var(--ui))] text-ink2">Built by Meta {sim.model} from SaveBell&apos;s assessment in {(sim.ms / 1000).toFixed(0)} s.{sim.downgraded ? ` ${sim.downgraded} claim(s) the model made without evidence were downgraded to hypothetical.` : ""}</p>
+          <p className="text-[calc(11px*var(--ui))] text-ink2">{sim.model === "template" ? "Built from a fixed template for this type of flaw and SaveBell\u2019s version check. No AI model was used, and it is not specific to how your app is built." : `Built by ${sim.model} from SaveBell\u2019s assessment in ${(sim.ms / 1000).toFixed(0)} s.${sim.downgraded ? ` ${sim.downgraded} claim(s) the model made without evidence were downgraded to hypothetical.` : ""}`}</p>
         </div>
       )}
     </section>

@@ -7,8 +7,10 @@
 import { createHash } from "node:crypto";
 import type { Assessment, Finding, Fix } from "./schema";
 import { readFile } from "./repo";
-import { READ_ONLY, UNTRUSTED, sparkJSON } from "./spark";
+import { READ_ONLY, UNTRUSTED, llmJSON } from "./llm";
 import { kv } from "./store";
+import { hasAI } from "./env";
+import { impactFor } from "./impact-templates";
 
 export type Basis = "demonstrated" | "inferred" | "hypothetical";
 export type Screen = { kind: "chat" | "agent_log" | "checkout" | "notification" | "form" | "page" | "terminal" | "email"; title: string; lines: { who: "user" | "app" | "agent" | "attacker" | "system"; text: string; tone: "normal" | "danger" | "success" | "muted" }[] };
@@ -100,11 +102,45 @@ const simVersion = (a: Assessment, fix: Fix | null, lang: string) => createHash(
 /** Read-only: the simulation already built for this assessment/fix/language, if any (no model call). */
 export async function cachedSimulation(a: Assessment, fix: Fix | null, locale?: string): Promise<Simulation | null> { return kv.get<Simulation>(`sim:${simVersion(a, fix, simLang(locale))}`); }
 
+/**
+ * Walkthrough built without a model: a fixed four-step template chosen by the type of flaw the advisory describes
+ * (lib/impact-templates.ts), plus the one thing SaveBell actually checked, the installed package version. Only the
+ * version step can be "demonstrated" or "inferred" (ground() enforces it from the assessment); every other step is
+ * labelled hypothetical. It is not specific to how the application is built, and the surface is marked generic.
+ */
+export function templateSimulation(a: Assessment, f: Finding | null, fix: Fix | null, version: string): Simulation {
+  const t0 = Date.now();
+  const tpl = impactFor(`${f?.title ?? ""} ${f?.claim?.summary ?? ""}`);
+  const vc = a.conditions.find((c) => c.computed && (c.state === "Observed" || c.state === "Inferred")) ?? null;
+  const dep = a.dependency;
+  const ev = vc ? [{ condition_id: vc.id, file: vc.evidence[0]?.file ?? null, line: vc.evidence[0]?.line ?? null }] : [];
+  const pkg = dep ? `${dep.name} ${dep.version}` : "the affected package";
+  const steps: Step[] = !vc ? [] : [
+    { n: 1, actor: "user", basis: "hypothetical", evidence: [], narration: "Someone uses your app in the ordinary way.",
+      screen: { kind: "page", title: "Your app, in normal use", lines: [{ who: "user", text: "A visitor opens your app and uses it as usual.", tone: "normal" }] } },
+    { n: 2, actor: "app", basis: "demonstrated", evidence: ev, narration: `Your app includes ${pkg}, which the advisory lists as affected.`,
+      screen: { kind: "terminal", title: "What your app is running", lines: [{ who: "system", text: `${pkg} is installed${dep?.source_file ? ` (${dep.source_file})` : ""}.`, tone: "muted" }, { who: "system", text: "The advisory lists this version as affected.", tone: "danger" }] } },
+    { n: 3, actor: "attacker", basis: "hypothetical", evidence: [], narration: `${tpl.attacker} ${tpl.app}`,
+      screen: { kind: "notification", title: "What an attacker could do", lines: [{ who: "attacker", text: tpl.attacker, tone: "danger" }, { who: "app", text: tpl.app, tone: "danger" }] } },
+    { n: 4, actor: "app", basis: "hypothetical", evidence: [], narration: tpl.consequence,
+      screen: { kind: "notification", title: "Possible result", lines: [{ who: "system", text: tpl.consequence, tone: "danger" }] } },
+  ];
+  const g = ground({
+    applicable: steps.length > 0, not_applicable_reason: steps.length ? null : "SaveBell found no affected package version in this repository, so there is nothing to walk through.",
+    persona: "A visitor to your app (fictional)", surface: { kind: "application", name: "Your application", derived_from: [] }, steps,
+    consequence: { summary: `${tpl.consequence} Whether this can happen in your app depends on how it uses the package: SaveBell checked the installed version only.`, basis: "hypothetical", evidence: [] },
+    with_fix: fix && fix.files.length ? { blocked_at_step: 2, changed_behavior: "Your app would run a version of the package outside the affected range, so the flaw the advisory describes is no longer present in that package.", remaining_uncertainty: ["The lockfile must be regenerated and installed before the new version takes effect.", "Another package may still bring in an affected version."] } : null,
+  }, a, new Set<string>(), fix);
+  return { ...g, model: "template", ms: Date.now() - t0, created_at: new Date().toISOString(), version };
+}
+
 export async function simulate(a: Assessment, f: Finding | null, fix: Fix | null, opts: { force?: boolean; locale?: string } = {}): Promise<Simulation> {
   const lang = simLang(opts.locale);
   const version = simVersion(a, fix, lang);
   const key = `sim:${version}`;
   if (!opts.force) { const c = await kv.get<Simulation>(key); if (c) return c; }
+  // No model configured (always, on the hosted site): a fixed template for this type of flaw, grounded the same way.
+  if (!hasAI()) { const sim = templateSimulation(a, f, fix, version); await kv.set(key, sim); return sim; }
   const repoFull = a.repo.split("/").slice(0, 2).join("/");
   const files = [...new Set([...a.locations.map((l) => l.file), ...a.conditions.flatMap((c) => c.evidence.map((e) => e.file))])].filter((p) => !/(^|\/)\.env|\.pem$|\.key$|lock/.test(p)).slice(0, 5);
   const texts = new Map<string, string>();
@@ -113,7 +149,7 @@ export async function simulate(a: Assessment, f: Finding | null, fix: Fix | null
   const conds = a.conditions.map((c) => `- ${c.id} [${c.state}] ${c.text}${c.evidence[0] ? ` (${c.evidence[0].file}:${c.evidence[0].line ?? "?"})` : ""}`).join("\n");
   const fixText = fix && fix.files.length ? `FIX (${fix.agent === "muse-code" ? "made by Muse Code" : "proposed"}; status ${fix.status}${fix.runner?.tests?.executed ? `; tests ${fix.runner.tests.exit_code === 0 ? "passed" : "failed"}` : "; not tested"}):\n${fix.files.map((x) => x.patch).join("\n").slice(0, 12000)}` : "FIX: none provided";
   const langRule = lang !== "en" ? `\n- Write persona, narration, screen text, consequence and with_fix text in the language with code "${lang}". Keep file paths, identifiers and code in English.` : "";
-  const r = await sparkJSON<Parameters<typeof ground>[0]>({ system: `${READ_ONLY}\n${UNTRUSTED}\n${RULES}${langRule}`, name: "simulate", schema: SCHEMA, temperature: 0.2,
+  const r = await llmJSON<Parameters<typeof ground>[0]>({ system: `${READ_ONLY}\n${UNTRUSTED}\n${RULES}${langRule}`, name: "simulate", schema: SCHEMA, temperature: 0.2,
     user: `THREAT (untrusted): ${f?.title ?? a.finding_id}\nSUMMARY (untrusted): ${f?.claim?.summary ?? ""}\nSAVEBELL VERDICT: ${a.verdict} (${a.verdict_reason})\nCONDITIONS AS ASSESSED BY SAVEBELL:\n${conds}\n\n${fixText}\n\nREPOSITORY FILES (untrusted, numbered):\n${listing.slice(0, 60000)}` });
   const g = ground(r.out, a, new Set(texts.keys()), fix);
   const sim: Simulation = { ...g, model: r.model, ms: r.ms, created_at: new Date().toISOString(), version };

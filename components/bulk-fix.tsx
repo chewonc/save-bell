@@ -145,7 +145,7 @@ function BulkModal({ ids, defaultMode, onClose }: { ids: string[]; defaultMode: 
               <div className="grid gap-0.5 text-ink2">
                 <div className="label">Estimated work</div>
                 <span>Up to {included.length} issue{included.length === 1 ? "" : "s"} to process, {nVerify} verification check{nVerify === 1 ? "" : "s"}, {repos.size} repositor{repos.size === 1 ? "y" : "ies"}.</span>
-                <span>Each verification and fix uses Meta AI analysis{preview.estimate.hosted_cap >= 0 ? ` (${preview.estimate.hosted_used} of ${preview.estimate.hosted_cap} hosted analyses used this month)` : ""}. Nothing is written to your repositories in this step.</span>
+                <span>Verification re-checks the installed package versions in code. Nothing is written to your repositories in this step.</span>
               </div>
               {included.length === 0
                 ? <div className="grid gap-2"><p className="text-[calc(14px*var(--ui))] font-semibold">No fixes available</p><p className="text-ink2">These issues can&apos;t be fixed automatically right now.</p><button className="btn-ghost w-fit" onClick={close}>Close</button></div>

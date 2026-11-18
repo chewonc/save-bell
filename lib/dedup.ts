@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Finding, Item, SourceId, Tier } from "./schema";
 import { store } from "./store";
+import { findingQuarantined, itemBlocked } from "./sources/gate";
 
 export const sha = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 24);
 
@@ -75,8 +76,12 @@ export async function upsertFinding(item: Item): Promise<{ finding: Finding; cha
     return { finding: f, changed: true, created: true };
   }
 
-  const f = (await store.getFinding(fid))!;
+  // Raw read: a quarantined finding must still be found here, so a permitted source reporting the same advisory joins it.
+  const f = (await store.getFindingRaw(fid))!;
   if (f.items.includes(item.id)) return { finding: f, changed: false, created: false };
+  // Leaving quarantine: the stored title came from a source that may not be shown, so take the permitted item's title.
+  const leavingQuarantine = findingQuarantined(f) && !itemBlocked(item);
+  if (leavingQuarantine) f.title = item.title;
   const before = JSON.stringify([f.tier, f.ids, f.published_at, f.withdrawn_at ?? null]);
   // Older records: rebuild the publisher list from the stored items once.
   if (!f.publishers) f.publishers = [...new Set((await Promise.all(f.items.map((i) => store.getItem(i)))).filter((x): x is Item => !!x).map(publisherOf))];
@@ -92,6 +97,6 @@ export async function upsertFinding(item: Item): Promise<{ finding: Finding; cha
   // A new item with substantive text changes what the claim is extracted from (the claim version is a hash of all item
   // text), so the finding is re-processed: re-extraction, new assessments and a fresh timeline. Withdrawal also counts.
   const newText = (item.text ?? "").trim().length >= 200;
-  const changed = newText || before !== JSON.stringify([f.tier, f.ids, f.published_at, f.withdrawn_at ?? null]);
+  const changed = newText || leavingQuarantine || before !== JSON.stringify([f.tier, f.ids, f.published_at, f.withdrawn_at ?? null]);
   return { finding: f, changed, created: false };
 }

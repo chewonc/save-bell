@@ -66,7 +66,7 @@ export default async function DemoCase({ params }: { params: Promise<{ id: strin
             </li>
           ))}
         </ul>
-        <p className="text-[calc(12px*var(--ui))] text-ink2">Analysis: {a.hosted === "deterministic" ? "version check in code (no model)" : a.hosted === "capped" ? "version check only (hosted budget reached)" : modelName(a.model)}{a.investigation ? ` · ${a.investigation.steps} read-only tool steps` : ""} · {fmtDate(a.timestamps.processed_at)}</p>
+        <p className="text-[calc(12px*var(--ui))] text-ink2">Analysis: {a.hosted === "deterministic" ? "version check in code (no model)" : a.hosted === "capped" ? "version check only (no AI model on this deployment)" : modelName(a.model)}{a.investigation ? ` · ${a.investigation.steps} read-only tool steps` : ""} · {fmtDate(a.timestamps.processed_at)}</p>
       </section>
 
       <CredibilityPanel c={f?.credibility} />

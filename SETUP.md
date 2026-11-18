@@ -8,8 +8,7 @@ Create `.env.local` at the project root (gitignored). On Vercel, add the same na
 
 | Variable | Required | What it is |
 |---|---|---|
-| `META_API_KEY` | yes | Meta Model API key (dev.meta.ai). Muse Spark 1.3 does claim extraction, report fact-checking (Responses API + `web_search`), agentic repository investigation (tool calling), condition assessment, fix preview, user-impact simulation and UI translation. |
-| `META_MODEL`, `META_BASE_URL` | no | Defaults `muse-spark-1.3`, `https://api.meta.ai/v1`. |
+| `AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY` | no | **Not needed.** SaveBell runs without any AI model: advisories are matched to your lockfiles by rules in code, and the server makes no model calls. Self-hosted deployments may set these to an OpenAI-compatible endpoint (for example Ollama at `http://localhost:11434/v1`) to also analyse code-level conditions with their own model. The old `META_*` variables are no longer read. |
 | `GITHUB_TOKEN` | fallback | Fine-grained token with read-only Contents; used only for repositories registered by the admin API (demo fixtures) or when an installation token is unavailable. |
 | `GITHUB_WEBHOOK_SECRET` | yes | The secret set on the GitHub App webhook. |
 | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_SLUG` | yes for onboarding | App id, the PEM private key (newlines may be escaped as `\n`), and the App's URL slug (this deployment: `save-bell-chewonc`, `https://github.com/apps/<slug>`). |
@@ -19,13 +18,13 @@ Create `.env.local` at the project root (gitignored). On Vercel, add the same na
 | `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY` | yes for deployment | Scheduler + queue. Without them, polls run only when called and findings are processed inline. |
 | `QSTASH_URL` | yes if the QStash account is regional | The endpoint shown next to the token in the Upstash console (e.g. `https://qstash-eu-central-1.upstash.io`). Without it a regional account fails with "user … not found". |
 | `ALERT_WEBHOOK_URL` | optional | A global Slack or Discord *incoming webhook*. Users can add their own in Settings. |
-| `GOOGLE_TRANSLATE_API_KEY` | optional | Not needed: without it Muse Spark translates (identifiers protected by placeholders; cached per string). Korean ships as a reviewed static dictionary. Set it only to prefer Google Cloud Translation. |
+| `GOOGLE_TRANSLATE_API_KEY` | optional | Not needed. Without it the UI is English plus the reviewed Korean dictionary. Set it only if you want paid machine translation into other languages. |
 | `NVD_API_KEY` | optional | Raises the NVD API rate limit (public: 5 requests / 30 s). |
 | `FIX_ENABLED` | optional | `1` enables fix drafting and authorized write actions. Off by default. |
 | `RUNNER_DISPATCH_TOKEN` | for automated fixes | Fine-grained PAT on **this** repository only, permission *Actions: read and write*. Used to dispatch `.github/workflows/remediate.yml`. |
 | `ARGUS_RUNNER_SECRET` | for automated fixes | Long random string; set the same value as the Actions secret `ARGUS_RUNNER_SECRET`. |
 | `RUNNER_REPO`, `RUNNER_WORKFLOW` | optional | Defaults `chewonc/save-bell`, `remediate.yml`. |
-| `AW_AGENTIC`, `AW_VERIFY_MODEL` | optional | Set to `0` to switch off agentic investigation or the web-search fact-check (cost control). |
+| `AW_AGENTIC` | optional | Only with a self-hosted model: set to `0` to switch off its repository investigation step. (`AW_VERIFY_MODEL` no longer exists: the report fact-check uses registry lookups only.) |
 | `VAPID_PUBLIC_KEY`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | optional (browser push) | `npx web-push generate-vapid-keys`; put the public key in both public-key variables; subject is `mailto:you@example.com`. |
 | `DEMO_SHARED_REPOS` | optional | `1` shows admin-registered (system) repositories to every signed-in user, labelled demo. |
 | `ADMIN_TOKEN` | yes | Long random string protecting `/api/admin`, `/api/analyze`, manual polls and the push fan-out route. |
@@ -104,7 +103,7 @@ npm test           # unit tests (no network, no model)
 npm run typecheck && npm run lint
 ```
 
-Set at least `META_API_KEY`, `GITHUB_TOKEN`, `ADMIN_TOKEN` in `.env.local`; add the sign-in and App variables to try onboarding locally (GitHub callback URLs must then point at `http://localhost:3000`). Trigger the scheduler with `curl -X POST "localhost:3000/api/poll/tick?force=1" -H "authorization: Bearer $ADMIN_TOKEN"`.
+Set at least `GITHUB_TOKEN` and `ADMIN_TOKEN` in `.env.local` (no AI key is needed); add the sign-in and App variables to try onboarding locally (GitHub callback URLs must then point at `http://localhost:3000`). Trigger the scheduler with `curl -X POST "localhost:3000/api/poll/tick?force=1" -H "authorization: Bearer $ADMIN_TOKEN"`.
 
 **Second dev server from the same checkout:** set `NEXT_DIST_DIR=.next-<name>` and a different port (see `.claude/launch.json`). `next.config.ts` then generates a git-ignored `tsconfig.next-<name>.json` that extends `tsconfig.json`, and points Next.js at it, because Next.js adds the dist dir's type paths to the `include` of whichever tsconfig it uses. The tracked `tsconfig.json` is therefore never rewritten by a dev server, and `git pull` is not blocked by it. Do not commit the generated files.
 

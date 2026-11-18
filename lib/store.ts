@@ -21,6 +21,7 @@ type KV = {
 };
 
 // Dev fallback persists to .data/store.json (gitignored) so hot reloads and restarts keep state.
+import { findingQuarantined, itemBlocked } from "./sources/gate";
 import fs from "node:fs";
 import path from "node:path";
 const DATA_FILE = path.join(process.cwd(), ".data", "store.json");
@@ -125,7 +126,10 @@ export const ALERT_HISTORY = 3000;
 export const store = {
   // items
   putItem: (i: Item) => kv.set(K.item(i.id), i),
-  getItem: (id: string) => kv.get<Item>(K.item(id)),
+  /** Items from sources without a recorded permission are never returned here (lib/sources/gate.ts). */
+  getItem: async (id: string) => { const i = await kv.get<Item>(K.item(id)); return i && !itemBlocked(i) ? i : null; },
+  /** Ungated read, for the source audit and ingestion bookkeeping only. Never use it to build a page or an API response. */
+  getItemRaw: (id: string) => kv.get<Item>(K.item(id)),
   /** returns true the first time a (source,key) pair is seen */
   markSeen: (source: string, key: string) => kv.setnx(K.seen(source, key), new Date().toISOString()),
   /** Undo markSeen after a failed ingest so the next run retries the item instead of losing it. */
@@ -137,11 +141,18 @@ export const store = {
     await kv.sadd(K.findings, f.id);
     for (const a of f.ids) await kv.set(K.alias(a), f.id);
   },
-  getFinding: (id: string) => kv.get<Finding>(K.finding(id)),
+  /** A finding known only from sources without a recorded permission is quarantined: stored, but not returned here. */
+  getFinding: async (id: string) => { const f = await kv.get<Finding>(K.finding(id)); return f && !findingQuarantined(f) ? f : null; },
+  /** Ungated read, for the source audit and for merging new items only. */
+  getFindingRaw: (id: string) => kv.get<Finding>(K.finding(id)),
   findingIdByAlias: (a: string) => kv.get<string>(K.alias(a)),
   findingIdByUrl: (u: string) => kv.get<string>(K.urlKey(u)),
   setUrl: (u: string, fid: string) => kv.set(K.urlKey(u), fid),
   async listFindings(): Promise<Finding[]> {
+    return (await this.listFindingsRaw()).filter((f) => !findingQuarantined(f));
+  },
+  /** Every stored finding, including quarantined ones. For the source audit only. */
+  async listFindingsRaw(): Promise<Finding[]> {
     const ids = await kv.smembers(K.findings);
     const fs = await Promise.all(ids.map((id) => kv.get<Finding>(K.finding(id))));
     return fs.filter((x): x is Finding => !!x).sort((a, b) => b.discovered_at.localeCompare(a.discovered_at));
@@ -153,14 +164,28 @@ export const store = {
     await kv.set(K.assessment(a.id), a);
     if (!had) { await kv.lpush(K.assessments, a.id); await kv.ltrim(K.assessments, 0, 999); }
   },
-  getAssessment: (id: string) => kv.get<Assessment>(K.assessment(id)),
+  /** An assessment of a quarantined finding is hidden with it. */
+  async getAssessment(id: string) {
+    const a = await kv.get<Assessment>(K.assessment(id));
+    if (!a) return null;
+    const f = await kv.get<Finding>(K.finding(a.finding_id));
+    return f && findingQuarantined(f) ? null : a;
+  },
   async listAssessmentIds(n = 1000): Promise<string[]> {
     return [...new Set(await kv.lrange<string>(K.assessments, 0, n - 1))];
   },
   async listAssessments(n = 100): Promise<Assessment[]> {
     const ids = (await this.listAssessmentIds(n + 50)).slice(0, n);
-    const as = await kv.mget<Assessment>(ids.map(K.assessment));
-    return as.filter((x): x is Assessment => !!x);
+    const as = (await kv.mget<Assessment>(ids.map(K.assessment))).filter((x): x is Assessment => !!x);
+    const fids = [...new Set(as.map((a) => a.finding_id))];
+    const fs = fids.length ? await kv.mget<Finding>(fids.map(K.finding)) : [];
+    const hidden = new Set(fids.filter((_, i) => fs[i] && findingQuarantined(fs[i]!)));
+    return hidden.size ? as.filter((a) => !hidden.has(a.finding_id)) : as;
+  },
+  /** Every stored assessment in the recent list, including hidden ones. For the source audit only. */
+  async listAssessmentsRaw(n = 1000): Promise<Assessment[]> {
+    const ids = (await this.listAssessmentIds(n)).slice(0, n);
+    return (await kv.mget<Assessment>(ids.map(K.assessment))).filter((x): x is Assessment => !!x);
   },
   /** Rewrite the assessments list without duplicates or dangling ids; delete assessments/findings whose repo matches `repoPrefix` when given. */
   async cleanup(repoPrefix?: string): Promise<{ list_before: number; list_after: number; deleted_assessments: number; deleted_findings: number }> {
@@ -209,6 +234,8 @@ export const store = {
   recentLog: (n = 200) => kv.lrange<LogEntry>(K.log, 0, n - 1),
   /** daily QStash message counter (free tier: 1,000/day) */
   countMessage: () => kv.incr(K.daily(new Date().toISOString().slice(0, 10))),
+  /** Queue messages published today (read-only; for the status endpoint). */
+  messagesToday: async () => (await kv.get<number>(K.daily(new Date().toISOString().slice(0, 10)))) ?? 0,
 
   // ---- users / installations / per-user repos ----------------------------
   async putUser(u: User) { await kv.set(K.user(u.id), u); await kv.sadd(K.users, u.id); },

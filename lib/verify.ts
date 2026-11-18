@@ -8,8 +8,8 @@
 //     artefacts and distinct publishers support. Search results are leads, not proof.
 // Labels: verified · corroborated · unverified · disputed · likely_false.
 import type { Finding, Item } from "./schema";
-import { normUrl, sparkSearchJSON, UNTRUSTED } from "./spark";
 import { USER_AGENT } from "./ua";
+import { arxivFetch } from "./sources/arxiv-limit";
 
 export type Credibility = "verified" | "corroborated" | "unverified" | "disputed" | "likely_false";
 export type Artefact = { id: string; kind: "cve" | "ghsa" | "arxiv"; status: "exists" | "rejected" | "withdrawn" | "not_found" | "error"; registry: string; url: string; title: string | null };
@@ -76,7 +76,8 @@ async function checkGhsa(id: string): Promise<Artefact> {
 async function checkArxiv(id: string): Promise<Artefact> {
   const base: Artefact = { id: `arXiv:${id}`, kind: "arxiv", status: "error", registry: "arXiv", url: `https://arxiv.org/abs/${id}`, title: null };
   try {
-    const r = await get(`https://export.arxiv.org/api/query?id_list=${id}&max_results=1`);
+    // Shared global limiter: one arXiv request every three seconds across the feeds and this lookup.
+    const r = await arxivFetch(`https://export.arxiv.org/api/query?id_list=${id}&max_results=1`, () => ({ headers: { "user-agent": USER_AGENT }, signal: AbortSignal.timeout(15_000) }));
     if (!r.ok) return base;
     const x = await r.text();
     const entry = x.split("<entry>")[1];
@@ -91,39 +92,8 @@ export async function checkArtefacts(text: string): Promise<Artefact[]> {
   return Promise.all([...ids.cve.map(checkCve), ...ids.ghsa.map(checkGhsa), ...ids.arxiv.map(checkArxiv)]);
 }
 
-export type ModelVerdict = {
-  claims: { claim: string; primary_sources: string[]; independent_reports: string[]; copies: string[]; contradictions: { source_url: string; detail: string }[] }[];
-  suggested_label: Credibility; rationale: string;
-};
-const SCHEMA = {
-  type: "object", additionalProperties: false, required: ["claims", "suggested_label", "rationale"],
-  properties: {
-    claims: { type: "array", items: { type: "object", additionalProperties: false, required: ["claim", "primary_sources", "independent_reports", "copies", "contradictions"],
-      properties: {
-        claim: { type: "string" }, primary_sources: { type: "array", items: { type: "string" } }, independent_reports: { type: "array", items: { type: "string" } }, copies: { type: "array", items: { type: "string" } },
-        contradictions: { type: "array", items: { type: "object", additionalProperties: false, required: ["source_url", "detail"], properties: { source_url: { type: "string" }, detail: { type: "string" } } } },
-      } } },
-    suggested_label: { type: "string", enum: ["verified", "corroborated", "unverified", "disputed", "likely_false"] },
-    rationale: { type: "string" },
-  },
-};
-const SYSTEM = `You are the fact-checking stage of SaveBell, a security monitor. ${UNTRUSTED}
-Task: decide how credible a security threat REPORT is. Do not judge whether any codebase is affected.
-1. Extract at most 4 specific, checkable factual claims (vulnerability exists, affected product/versions, impact, exploitation in the wild, paper results).
-2. Use web search to find PRIMARY sources (vendor advisory, CVE/GHSA record, maintainers' release notes or commit, the paper itself) and INDEPENDENT reports (different organisations that did their own analysis).
-3. Articles that merely restate one origin are "copies", not independent confirmation. Search results by themselves are not proof.
-4. Record contradictions: a primary source that disagrees on existence, versions, impact or status (rejected, withdrawn, disputed).
-5. Cite only URLs you actually saw in search results or opened. Never invent URLs. Empty lists are fine.
-Labels: verified = a primary source confirms the core claim; corroborated = at least two independent credible reports or one primary source for part of it; unverified = no confirmation found; disputed = credible contradiction; likely_false = cited identifiers or artefacts do not exist or primary sources refute it.`;
-
-export async function adjudicate(report: string, artefacts: Artefact[]): Promise<{ verdict: ModelVerdict; seen: Set<string>; searches: { query: string }[]; tokens: number; ms: number; model: string }> {
-  const facts = artefacts.map((a) => `- ${a.id} @ ${a.registry}: ${a.status}${a.title ? ` (${a.title})` : ""}`).join("\n") || "(no identifiers cited)";
-  const r = await sparkSearchJSON<ModelVerdict>({ system: SYSTEM, name: "verify", schema: SCHEMA, effort: "low",
-    user: `REGISTRY LOOKUPS ALREADY DONE BY CODE (facts):\n${facts}\n\nREPORT (untrusted):\n${report.slice(0, 12000)}` });
-  return { verdict: r.out, seen: r.seen, searches: r.searches, tokens: r.tokens, ms: r.ms, model: r.model };
-}
-
-/** Pure rule. Inputs are facts (artefacts, sources, publishers) plus model output already filtered to URLs the search saw. */
+/** Pure rule over facts: registry lookups, sources and publishers. (primary, independent, contradictions and suggested were
+ *  filled by a web-search model until Nov 2026; verifyFinding now always passes them empty.) */
 export function credibilityLabel(input: { officialSource: boolean; artefacts: Artefact[]; publishers: string[]; primary: string[]; independent: string[]; contradictions: { source_url: string; detail: string }[]; suggested: Credibility | null }): { label: Credibility; reason: string } {
   const { officialSource, artefacts, publishers, primary, independent, contradictions, suggested } = input;
   const bad = artefacts.filter((a) => a.status === "rejected" || a.status === "withdrawn");
@@ -145,7 +115,8 @@ export function credibilityLabel(input: { officialSource: boolean; artefacts: Ar
   return { label, reason };
 }
 
-export async function verifyFinding(f: Finding, items: Item[], text: string, version: string, opts: { useModel: boolean }): Promise<Verification> {
+/** Credibility of a report from facts only: registry lookups for the ids it cites, and who published it. No model, no web search. */
+export async function verifyFinding(f: Finding, items: Item[], text: string, version: string): Promise<Verification> {
   const officialSource = f.sources.some((s) => OFFICIAL_SOURCES.includes(s));
   const artefacts = await checkArtefacts(text);
   const publishers = [...new Set(items.map((i) => hostOf(i.url)).filter((h): h is string => !!h))];
@@ -154,29 +125,8 @@ export async function verifyFinding(f: Finding, items: Item[], text: string, ver
     ...publishers.map((p) => ({ kind: "publisher" as const, text: `reported by ${p}`, url: items.find((i) => hostOf(i.url) === p)?.url ?? null })),
   ];
   const model: Verification["model"] = { used: false, suggested: null, searches: 0, queries: [], discarded_urls: 0, tokens: 0, ms: 0, error: null, name: null };
-  let primary: string[] = [], independent: string[] = [];
+  const primary: string[] = [], independent: string[] = [];
   const contradictions: { source_url: string; detail: string }[] = [];
-  // Official-source findings are verified by definition; spend the search only on reports that need it.
-  if (opts.useModel && !officialSource) {
-    try {
-      const r = await adjudicate(text, artefacts);
-      const ok = (u: string) => r.seen.has(normUrl(u)) || artefacts.some((a) => normUrl(a.url) === normUrl(u));
-      let discarded = 0; const keep = (xs: string[]) => xs.filter((u) => { const k = ok(u); if (!k) discarded++; return k; });
-      for (const c of r.verdict.claims) {
-        const p = keep(c.primary_sources), i = keep(c.independent_reports), cp = keep(c.copies);
-        const cx = c.contradictions.filter((x) => { const k = ok(x.source_url); if (!k) discarded++; return k; });
-        primary.push(...p); independent.push(...i); contradictions.push(...cx);
-        evidence.push({ kind: "note", text: `claim: ${c.claim}`, url: null });
-        for (const u of p) evidence.push({ kind: "primary_source", text: `primary source for: ${c.claim.slice(0, 80)}`, url: u });
-        for (const u of i) evidence.push({ kind: "independent_report", text: `independent report: ${hostOf(u)}`, url: u });
-        for (const u of cp) evidence.push({ kind: "copy", text: `restates the same origin: ${hostOf(u)}`, url: u });
-        for (const x of cx) evidence.push({ kind: "contradiction", text: x.detail.slice(0, 240), url: x.source_url });
-      }
-      primary = [...new Set(primary)]; independent = [...new Set(independent)];
-      Object.assign(model, { used: true, suggested: r.verdict.suggested_label, searches: r.searches.length, queries: r.searches.map((s) => s.query).filter(Boolean).slice(0, 8), discarded_urls: discarded, tokens: r.tokens, ms: r.ms, name: r.model });
-      if (r.verdict.rationale) evidence.push({ kind: "note", text: `model rationale: ${r.verdict.rationale.slice(0, 400)}`, url: null });
-    } catch (e) { model.error = String((e as Error).message ?? e).slice(0, 200); }
-  }
   const { label, reason } = credibilityLabel({ officialSource, artefacts, publishers, primary, independent, contradictions, suggested: model.suggested });
   return { label, reason, evidence: evidence.slice(0, 40), artefacts, publishers, model, checked_at: new Date().toISOString(), version };
 }

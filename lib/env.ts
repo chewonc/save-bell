@@ -1,9 +1,12 @@
 // Central env access. Secrets are read here only and never logged.
 import { createHash, timingSafeEqual } from "node:crypto";
 export const env = {
-  META_API_KEY: process.env.META_API_KEY ?? "",
-  META_MODEL: process.env.META_MODEL ?? "muse-spark-1.3",
-  META_BASE_URL: process.env.META_BASE_URL ?? "https://api.meta.ai/v1",
+  // Optional AI model for SELF-HOSTED deployments only: any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, a paid
+  // API). Unset on the hosted site, where the server makes no model calls at all and every analysis is done by rules.
+  // The old META_* variables are deliberately not read any more.
+  AI_BASE_URL: (process.env.AI_BASE_URL ?? "").replace(/\/$/, ""), // e.g. http://localhost:11434/v1
+  AI_MODEL: process.env.AI_MODEL ?? "",
+  AI_API_KEY: process.env.AI_API_KEY ?? "", // optional: local servers usually need none
   GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? "", // read-only contents access
   GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET ?? "",
   UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL ?? "",
@@ -29,7 +32,6 @@ export const env = {
   ARGUS_RUNNER_SECRET: process.env.ARGUS_RUNNER_SECRET ?? "",
   RUNNER_REPO: process.env.RUNNER_REPO ?? "chewonc/save-bell",
   RUNNER_WORKFLOW: process.env.RUNNER_WORKFLOW ?? "remediate.yml",
-  WONDER_ESCALATION: process.env.WONDER_ESCALATION === "1",
   NVD_API_KEY: process.env.NVD_API_KEY ?? "",
   // Hosted per-repo analyses per user per calendar month before findings stay "Possible issue" for the user's own agent.
   HOSTED_ANALYSIS_CAP: Number(process.env.HOSTED_ANALYSIS_CAP ?? 20),
@@ -42,6 +44,8 @@ export const env = {
   APP_URL: (process.env.APP_URL || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000")).replace(/\/$/, ""),
 };
 
+/** True only when a deployment has configured its own model endpoint. False on the hosted site. */
+export const hasAI = () => !!(env.AI_BASE_URL && env.AI_MODEL);
 export const hasRedis = () => !!(env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN);
 export const hasQStash = () => !!env.QSTASH_TOKEN;
 export const hasAuth = () => !!(env.BETTER_AUTH_SECRET && env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);

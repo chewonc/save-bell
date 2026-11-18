@@ -25,8 +25,8 @@ export async function chargeHosted(repoKey: string) {
   for (const u of await store.repoUsers(repoKey)) await kv.incr(key(u));
 }
 
-/** Every Meta Model API call site, by the usage name it is counted under in lib/spark.ts. */
-export const USAGE_NAMES = ["claim", "verify", "investigate", "assessment", "fix", "simulate", "translate", "timeline", "timeline_summary", "timeline_wonder"] as const;
+/** Every model call site, by the usage name it is counted under in lib/llm.ts. "verify" no longer calls a model. */
+export const USAGE_NAMES = ["claim", "verify", "investigate", "assessment", "fix", "simulate", "translate", "timeline", "timeline_summary"] as const;
 
 export async function usageSummary(m = month(), names: readonly string[] = ["claim", "assessment", "fix"]): Promise<Record<string, { calls: number; tokens: number; searches?: number }>> {
   const out: Record<string, { calls: number; tokens: number; searches?: number }> = {};

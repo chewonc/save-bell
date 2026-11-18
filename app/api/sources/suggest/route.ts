@@ -1,5 +1,5 @@
 // POST {name, url, description?}: "Suggest a source". Signed-in users only, rate-limited. The suggestion is checked
-// automatically (lib/source-suggest.ts) and either added to monitoring, queued for review, or refused, with the reason.
+// automatically (lib/source-suggest.ts) and either queued for an operator's review of the source's terms, or refused, with the reason.
 // GET: the signed-in user's own suggestions; with the admin token, every suggestion (review queue).
 import { isAdminAuth } from "@/lib/env";
 import { evaluateSuggestion, listSuggestions, saveSuggestion } from "@/lib/source-suggest";

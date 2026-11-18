@@ -8,10 +8,10 @@
 // Conflicting dates between sources are kept side by side. Optionally (WONDER_ESCALATION=1) Meta Muse Wonder reviews a
 // conflict; its preference is shown only when it quotes the supplied source text, and it never removes an event.
 import { createHash } from "node:crypto";
-import { env } from "./env";
+import { env, hasAI } from "./env";
 import type { Assessment, Finding, Fix, Item } from "./schema";
 import { fetchPageText } from "./fetchpage";
-import { READ_ONLY, UNTRUSTED, sparkJSON } from "./spark";
+import { READ_ONLY, UNTRUSTED, llmJSON } from "./llm";
 import { kv } from "./store";
 import { USER_AGENT } from "./ua";
 
@@ -177,10 +177,11 @@ export function validateProposal(p: Proposal, sources: { text: string }[], now =
 
 async function modelEvents(items: Item[]): Promise<{ events: TLEvent[]; proposed: number; rejected: { reason: string; title: string }[]; tokens_ms: number; name: string | null; error: string | null; calls: number }> {
   const sources = items.filter((i) => i.text && i.text.length >= 120).slice(0, 6).map((i) => ({ item: i, text: `${i.title}\n${i.text}`.slice(0, 8000) }));
-  if (!sources.length || !env.META_API_KEY) return { events: [], proposed: 0, rejected: [], tokens_ms: 0, name: null, error: env.META_API_KEY ? null : "META_API_KEY not configured", calls: 0 };
+  // No model configured (always the case on the hosted site): the timeline is built from registry records only.
+  if (!sources.length || !hasAI()) return { events: [], proposed: 0, rejected: [], tokens_ms: 0, name: null, error: null, calls: 0 };
   const user = sources.map((s, i) => `=== SOURCE ${i} (${s.item.source}; ${s.item.url ?? "no url"}; published ${s.item.published_at ?? "not stated"}) ===\n${s.text}`).join("\n\n");
   try {
-    const r = await sparkJSON<{ events: Proposal[] }>({ name: "timeline", schema: PROPOSAL_SCHEMA,
+    const r = await llmJSON<{ events: Proposal[] }>({ name: "timeline", schema: PROPOSAL_SCHEMA,
       system: `${READ_ONLY}\n${UNTRUSTED}\nTask: list the dated developments of this security threat that the SOURCES state explicitly: first disclosure, advisory updates or withdrawal, patch or fixed-version releases, reports of exploitation in the wild, research publications.
 Rules (code verifies each one; violations are discarded):
 - Only events whose date is written in the source. Never infer, estimate or use today's date. If a source gives no date for something, omit it.
@@ -199,7 +200,7 @@ Rules (code verifies each one; violations are discarded):
     }
     return { events, proposed: (r.out.events ?? []).length, rejected, tokens_ms: r.ms, name: r.model, error: null, calls: 1 };
   } catch (e) {
-    return { events: [], proposed: 0, rejected: [], tokens_ms: 0, name: env.META_MODEL, error: String((e as Error).message ?? e).slice(0, 200), calls: 1 };
+    return { events: [], proposed: 0, rejected: [], tokens_ms: 0, name: env.AI_MODEL, error: String((e as Error).message ?? e).slice(0, 200), calls: 1 };
   }
 }
 
@@ -240,33 +241,13 @@ export function findConflicts(events: TLEvent[]): [TLEvent, TLEvent][] {
   return pairs;
 }
 
-// ---- 5. Optional Muse Wonder review of a conflict ---------------------------------------------------------
-const WONDER_SCHEMA = { type: "object", additionalProperties: false, required: ["resolution", "evidence_quote", "reason"], properties: {
-  resolution: { type: "string", enum: ["prefer_a", "prefer_b", "unresolved"] }, evidence_quote: { type: "string" }, reason: { type: "string" } } };
-
+// ---- 5. Conflict review (pure helpers; the model review that used them was removed with the Meta API) ------
 /** Pure: a Wonder preference counts only when its evidence quote occurs verbatim in the material it was given. */
 export function groundReview(out: { resolution: WonderReview["resolution"]; evidence_quote: string; reason: string }, material: string): Pick<WonderReview, "resolution" | "reason" | "evidence_quote" | "grounded"> {
   const q = (out.evidence_quote ?? "").trim();
   const grounded = q.length >= 8 && norm(material).includes(norm(q));
   if (out.resolution === "unresolved" || !grounded) return { resolution: "unresolved", reason: grounded ? out.reason.slice(0, 300) : `Not accepted: the stated evidence does not appear in the sources.${out.reason ? ` (Model said: ${out.reason.slice(0, 200)})` : ""}`, evidence_quote: grounded ? q : null, grounded };
   return { resolution: out.resolution, reason: out.reason.slice(0, 300), evidence_quote: q.slice(0, 300), grounded };
-}
-
-export async function reviewConflict(a: TLEvent, b: TLEvent, texts: Map<string, string>, opts: { model?: string } = {}): Promise<WonderReview> {
-  const excerpt = (e: TLEvent) => { const t = e.sources.map((s) => (s.url ? texts.get(s.url) : null)).find(Boolean) ?? ""; const i = e.quote ? norm(t).indexOf(norm(e.quote)) : -1; return (i >= 0 ? t.slice(Math.max(0, i - 600), i + 900) : t.slice(0, 1500)); };
-  const side = (label: string, e: TLEvent) => `${label}: "${e.title}" dated ${e.at.slice(0, 10)} (${e.basis}, ${e.confidence}) from ${e.sources.map((s) => `${s.publisher} ${s.url ?? ""}`).join(", ")}\nSOURCE TEXT (untrusted):\n${excerpt(e)}${e.date_quote ? `\nDATE AS QUOTED: ${e.date_quote}` : ""}`;
-  const material = `${side("A", a)}\n\n${side("B", b)}`;
-  try {
-    const r = await sparkJSON<{ resolution: WonderReview["resolution"]; evidence_quote: string; reason: string }>({ name: "timeline_wonder", schema: WONDER_SCHEMA, model: opts.model ?? process.env.META_WONDER_MODEL ?? "muse-wonder-1.0",
-      system: `${READ_ONLY}\n${UNTRUSTED}\nTwo sources give different dates for what may be the same development of a security threat. Decide which date the supplied material supports better, or say "unresolved".
-- Use ONLY the material below. evidence_quote must be copied verbatim from it and must be the text that supports your choice.
-- Registry records (NVD, GitHub Advisory Database, OSV, CISA) state when the record was published, which can differ from when a researcher or vendor first disclosed the issue; both can be true. If both dates can be true, answer "unresolved" and explain.
-- Prefer "unresolved" whenever the material does not settle it.`,
-      user: material });
-    return { model: r.model, a: a.id, b: b.id, ...groundReview(r.out, material), error: null };
-  } catch (e) {
-    return { model: opts.model ?? process.env.META_WONDER_MODEL ?? "muse-wonder-1.0", a: a.id, b: b.id, resolution: "unresolved", reason: "Review unavailable; both dates are shown.", evidence_quote: null, grounded: false, error: String((e as Error).message ?? e).slice(0, 200) };
-  }
 }
 
 /** Pure: apply a review without removing anything. */
@@ -302,10 +283,10 @@ export function summaryGrounded(summary: string, events: TLEvent[]): boolean {
 }
 async function summarize(events: TLEvent[]): Promise<{ text: string; basis: "model" | "template"; error: string | null }> {
   const tpl = templateSummary(events);
-  if (!env.META_API_KEY || events.length < 2) return { text: tpl, basis: "template", error: null };
+  if (!hasAI() || events.length < 2) return { text: tpl, basis: "template", error: null };
   try {
     const list = events.map((e) => `${fmt(e)} | ${e.kind} | ${e.confidence} | ${e.title} | ${e.sources.map((s) => s.publisher).join(", ")}`).join("\n");
-    const r = await sparkJSON<{ summary: string }>({ name: "timeline_summary", schema: { type: "object", additionalProperties: false, required: ["summary"], properties: { summary: { type: "string" } } },
+    const r = await llmJSON<{ summary: string }>({ name: "timeline_summary", schema: { type: "object", additionalProperties: false, required: ["summary"], properties: { summary: { type: "string" } } },
       system: `${READ_ONLY}\nSummarize this security threat's timeline in at most 3 short sentences for a developer. Use ONLY the events listed. Keep "reported" and "inferred" events hedged ("reported", "listed"); only "confirmed" exploitation may be called confirmed. If nothing says exploitation is confirmed, do not imply it. Copy dates and versions exactly.`,
       user: list });
     const s = String(r.out.summary ?? "").trim().slice(0, 600);
@@ -319,7 +300,7 @@ const key = (fid: string) => `timeline:${fid}`;
 
 export async function getTimeline(f: Finding): Promise<ThreatTimeline | null> {
   const t = await kv.get<ThreatTimeline>(key(f.id));
-  return t && t.version === timelineVersion(f, env.WONDER_ESCALATION) ? t : null;
+  return t && t.version === timelineVersion(f, false) ? t : null;
 }
 
 // One build per finding at a time in this process: concurrent case-page views and the pipeline share it (no duplicate model calls).
@@ -333,11 +314,12 @@ export function buildTimeline(f: Finding, items: Item[], opts: { force?: boolean
 }
 
 async function buildTimelineOnce(f: Finding, items: Item[], opts: { force?: boolean; fetcher?: Fetcher; fetchPages?: boolean }): Promise<ThreatTimeline> {
-  const wonder = env.WONDER_ESCALATION;
+  const wonder = false; // model review of date conflicts was removed; conflicting dates are shown side by side
   const version = timelineVersion(f, wonder);
   if (!opts.force) { const c = await kv.get<ThreatTimeline>(key(f.id)); if (c && c.version === version) return c; }
   // Feed items often carry only a summary; read the linked page (same fetcher as the pipeline: robots.txt, rate-limited).
-  const read = opts.fetchPages === false ? items : await Promise.all(items.map(async (i) => {
+  // Off by default since the source-permissions audit (docs/SOURCES_AUDIT.md); only an explicit fetchPages: true reads pages.
+  const read = opts.fetchPages !== true ? items : await Promise.all(items.map(async (i) => {
     if (i.source !== "rss" || !i.url || i.text.length >= 1500) return i;
     const p = await fetchPageText(i.url).catch(() => null);
     return p?.ok ? { ...i, text: `${i.text}
@@ -348,11 +330,7 @@ ${p.text}` } : i;
   const events = mergeEvents([...base, ...reg.events, ...mod.events]);
   const pairs = findConflicts(events);
   const reviews: WonderReview[] = [];
-  if (wonder && pairs.length) {
-    const texts = new Map(read.filter((i) => i.url).map((i) => [i.url!, `${i.title}\n${i.text}`]));
-    const r = await reviewConflict(pairs[0][0], pairs[0][1], texts); // one review per build (cost cap)
-    applyReview(events, r); reviews.push(r);
-  } else for (const [a, b] of pairs) applyReview(events, { a: a.id, b: b.id, resolution: "unresolved", reason: "", evidence_quote: null, grounded: false, error: null });
+  for (const [a, b] of pairs) applyReview(events, { a: a.id, b: b.id, resolution: "unresolved", reason: "", evidence_quote: null, grounded: false, error: null });
   const sum = await summarize(events.filter((e) => e.lane === "threat" && e.kind !== "argus_discovered"));
   const dated = events.filter((e) => e.kind !== "argus_discovered");
   const t: ThreatTimeline = {

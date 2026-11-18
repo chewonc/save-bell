@@ -68,7 +68,7 @@ export function ThreatTimeline({ assessmentId, title = "Threat timeline", labels
         </div>}
       </div>
 
-      {busy && !t && <div className="grid gap-2" aria-busy="true" aria-live="polite"><p className="text-[calc(13px*var(--ui))] text-ink2">Collecting dated records and reading the sources with Meta Muse Spark (first time ~10–30 s)…</p>{[0, 1, 2].map((i) => <div key={i} className="h-[calc(14px*var(--ui))] rounded bg-[var(--sunken)] pulse" style={{ width: `${80 - i * 15}%` }} />)}</div>}
+      {busy && !t && <div className="grid gap-2" aria-busy="true" aria-live="polite"><p className="text-[calc(13px*var(--ui))] text-ink2">Collecting dated records from the vulnerability registries…</p>{[0, 1, 2].map((i) => <div key={i} className="h-[calc(14px*var(--ui))] rounded bg-[var(--sunken)] pulse" style={{ width: `${80 - i * 15}%` }} />)}</div>}
       {err && <p className="text-[calc(13px*var(--ui))]" style={{ color: "var(--contradicted)" }}>Timeline unavailable: {err}. <button type="button" className="underline" onClick={() => load()}>Try again</button></p>}
 
       {t && !expanded && (() => {
@@ -119,8 +119,8 @@ export function ThreatTimeline({ assessmentId, title = "Threat timeline", labels
           <summary>How this timeline was built</summary>
           <ul className="text-[calc(12px*var(--ui))] text-ink2 grid gap-1 mt-2">
             <li>{all.length} events from {sources} source(s). Dates come from source timestamps, registry records{t.registry.length ? ` (${t.registry.map((r) => `${r.id} ${r.registry}: ${r.status === "ok" ? "found" : r.status === "not_found" ? "not found" : "unreachable"}`).join("; ")})` : ""} and SaveBell&apos;s own records.</li>
-            <li>{t.model.name ? `Meta ${t.model.name}` : "Meta Muse Spark"} read the reports and proposed {t.model.proposed} dated development(s); {t.model.accepted} were kept because their date and claim appear verbatim in the source{t.model.rejected.length ? `; ${t.model.rejected.length} rejected (${[...new Set(t.model.rejected.map((r) => r.reason))].join("; ")})` : ""}.{t.model.error ? ` Model unavailable: ${t.model.error}. Showing dated records only.` : ""}</li>
-            <li>{t.wonder.enabled ? (t.wonder.reviews.length ? `Meta Muse Wonder reviewed a date conflict: ${t.wonder.reviews[0].resolution === "unresolved" ? "unresolved" : "a preference was accepted because it quoted the source"}. No event is ever removed.` : "Muse Wonder conflict review is on; no conflict needed review.") : "Conflicting dates are shown side by side (Muse Wonder review is off)."}</li>
+            {t.model.name || t.model.proposed ? <li>{t.model.name ?? "A model"} read the reports and proposed {t.model.proposed} dated development(s); {t.model.accepted} were kept because their date and claim appear verbatim in the source{t.model.rejected.length ? `; ${t.model.rejected.length} rejected (${[...new Set(t.model.rejected.map((r) => r.reason))].join("; ")})` : ""}.{t.model.error ? ` Model unavailable: ${t.model.error}. Showing dated records only.` : ""}</li> : <li>No AI model was used: every date comes from a registry record or a source timestamp.</li>}
+            <li>Conflicting dates are shown side by side; no event is ever removed.</li>
             <li>Exploitation is &ldquo;Confirmed&rdquo; only from CISA&apos;s Known Exploited Vulnerabilities catalog. Built {t.built_at.replace("T", " ").slice(0, 16)} UTC; rebuilt automatically when new reports about this threat arrive.</li>
           </ul>
         </details>

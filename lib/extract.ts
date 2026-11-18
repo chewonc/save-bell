@@ -1,7 +1,7 @@
 // Claim / condition extraction from an item's text (cached per claim_version). Version-in-range is
 // never extracted: it is computed in code from lockfiles and ranges (gate finding F1).
 import { Claim, ConditionDef } from "./schema";
-import { READ_ONLY, UNTRUSTED, sparkJSON } from "./spark";
+import { READ_ONLY, UNTRUSTED, llmJSON } from "./llm";
 
 const CLAIM_SCHEMA = {
   type: "object", additionalProperties: false,
@@ -38,7 +38,7 @@ Task: turn a security report into a testable claim about software systems.
 export type ExtractResult = { claim: Claim; ms: number; model: string };
 
 export async function extractClaim(text: string): Promise<ExtractResult> {
-  const { out, ms, model } = await sparkJSON<unknown>({ system: SYSTEM, user: `REPORT (untrusted):\n${text.slice(0, 60000)}`, schema: CLAIM_SCHEMA, name: "claim" });
+  const { out, ms, model } = await llmJSON<unknown>({ system: SYSTEM, user: `REPORT (untrusted):\n${text.slice(0, 60000)}`, schema: CLAIM_SCHEMA, name: "claim" });
   const claim = Claim.parse(out);
   // Merge duplicate package entries (advisories list one range per entry): one package, all ranges.
   const merged = new Map<string, { ecosystem: string; name: string; affected_ranges: string[] }>();

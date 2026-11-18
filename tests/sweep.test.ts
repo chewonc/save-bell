@@ -182,6 +182,16 @@ test("suggest a source: relevance and decision rules (only all-green sources are
   assert.equal(decide({ ...ok, entries: 2 }).status, "needs_review");
 });
 
+test("suggested sources are never collected automatically (source-permissions policy)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const poll = readFileSync("lib/poll.ts", "utf8");
+  assert.doesNotMatch(poll, /communityFeeds/, "the hourly poll must not read community feeds");
+  const sug = readFileSync("lib/source-suggest.ts", "utf8");
+  assert.doesNotMatch(sug, /kv\.set\("feeds:community"/, "a suggestion must not register a feed by itself");
+  assert.match(sug, /initialDecision\.status === "registered"\s*\?\s*\{ status: "needs_review"/, "all-green suggestions go to manual review");
+  assert.doesNotMatch(readFileSync("lib/sources/rss.ts", "utf8"), /news\.google\.com/, "Google News RSS is not collected");
+});
+
 test("suggest a source refuses internal and blocked links before fetching", async () => {
   const { evaluateSuggestion } = await import("../lib/source-suggest");
   assert.deepEqual(await evaluateSuggestion({ name: "x", url: "http://127.0.0.1/feed" }, "u"), { error: "Use a public link (no internal or IP addresses)." });
@@ -219,4 +229,20 @@ test("What we monitor: category summary is derived from real status", async () =
   const land = readFileSync("components/landing.tsx", "utf8");
   assert.doesNotMatch(land, /md:grid-cols-3 gap-8/); assert.match(land, /<details key=\{g\.id\}/);
   assert.doesNotMatch(land.slice(land.indexOf("function WhatWeMonitor")), /\btruncate\b/, "source names are not truncated");
+});
+
+test("source terms gate: only reviewed sources are collected, and silent-terms feeds keep title and link only", async () => {
+  const { collectable, titleOnly, termsFor, SOURCE_TERMS } = await import("../lib/sources/terms");
+  const { FEEDS, itemFromEntry } = await import("../lib/sources/rss");
+  for (const id of ["ghadv", "nvd", "kev", "osv"]) assert.ok(collectable(id) && !titleOnly(id), `${id} registry is allowed`);
+  for (const id of ["wiz", "snyk", "portswigger", "mastodon-infosec", "hn-vuln", "trailofbits", "some-new-feed"]) assert.equal(collectable(id), false, `${id} must not be fetched`);
+  assert.equal(termsFor("some-new-feed").status, "unverified", "an unlisted source is unverified by default");
+  for (const f of FEEDS) assert.ok(SOURCE_TERMS[f.id], `feed ${f.id} has a recorded terms review`);
+  for (const [id, v] of Object.entries(SOURCE_TERMS)) if (v.status === "allowed") assert.ok(v.terms_url && v.read_at, `${id} records the terms page and date read`);
+  const entry = { title: "Advisory for CVE-2026-0001", link: "https://example.org/a", author: null, published: null, summary: "Long body mentioning CVE-2026-0002.", guid: "g1" };
+  const restricted = itemFromEntry(FEEDS.find((f) => f.id === "oss-sec")!, entry, "2026-11-18T00:00:00Z");
+  assert.equal(restricted.text, entry.title, "summary text is not stored for title-and-link sources");
+  assert.ok(restricted.ids.includes("CVE-2026-0002"), "advisory IDs are still read from the summary");
+  const open = itemFromEntry(FEEDS.find((f) => f.id === "owasp-genai")!, entry, "2026-11-18T00:00:00Z");
+  assert.match(open.text, /Long body/, "openly licensed sources keep the summary");
 });

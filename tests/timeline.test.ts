@@ -113,9 +113,10 @@ test("repository lane: a pull request is shown as opened, never as resolved or v
   assert.ok(evs.every((e) => e.lane === "repo"));
 });
 
-test("full build with mocked Meta API: rejected proposals are counted, accepted ones carry quotes, cache by item set", async () => {
-  process.env.META_API_KEY ||= "test";
-  const { env } = await import("../lib/env"); env.META_API_KEY ||= "test";
+test("full build with a mocked self-hosted model: rejected proposals are counted, accepted ones carry quotes, cache by item set", async () => {
+  const { env } = await import("../lib/env");
+  const savedAI = { url: env.AI_BASE_URL, model: env.AI_MODEL };
+  env.AI_BASE_URL = "http://ai.test/v1"; env.AI_MODEL = "test-model"; // a self-hosted deployment with its own model
   const { buildTimeline, getTimeline } = await import("../lib/timeline");
   const orig = globalThis.fetch; let modelCalls = 0;
   const text = "Researchers disclosed the bypass on March 18, 2025. The flaw is being exploited in the wild according to our telemetry since March 24, 2025.";
@@ -150,29 +151,13 @@ test("full build with mocked Meta API: rejected proposals are counted, accepted 
     assert.equal(modelCalls, calls, "cached: no new model calls for the same item set");
     const f2 = { ...(f as object), items: ["it1", "it2"] } as never;
     assert.equal(await getTimeline(f2), null, "a new report about the threat invalidates the cached timeline");
-  } finally { globalThis.fetch = orig; }
+  } finally { globalThis.fetch = orig; env.AI_BASE_URL = savedAI.url; env.AI_MODEL = savedAI.model; }
 });
 
 test("conflicts: a merged registry record that also cites the blog still conflicts with the blog's earlier date", () => {
   const reg = E({ kind: "advisory_published", at: "2025-03-21T00:00:00.000Z", sources: [{ url: "https://github.com/advisories/G", publisher: "GitHub" }, { url: "https://blog", publisher: "blog" }] });
   const claim = E({ kind: "disclosure", at: "2025-02-27T00:00:00.000Z", confidence: "reported", basis: "model_extracted", sources: [{ url: "https://blog", publisher: "blog" }] });
   assert.equal(findConflicts([reg, claim]).length, 1);
-});
-
-test("Muse Wonder review: API failure leaves both events unresolved; the call goes to the Wonder model", async () => {
-  process.env.META_API_KEY ||= "test";
-  const { env } = await import("../lib/env"); env.META_API_KEY ||= "test";
-  const { reviewConflict } = await import("../lib/timeline");
-  const orig = globalThis.fetch; const models: string[] = [];
-  const a = E({}), b = E({ kind: "disclosure", basis: "model_extracted", confidence: "reported", sources: [{ url: "https://blog", publisher: "blog" }], quote: "disclosed on February 27, 2025" });
-  try {
-    globalThis.fetch = (async (_u: string, init?: RequestInit) => { models.push(JSON.parse(String(init?.body)).model); return new Response("bad request", { status: 400 }); }) as typeof fetch;
-    const r = await reviewConflict(a, b, new Map([["https://blog", "It was disclosed on February 27, 2025 privately."]]));
-    assert.equal(r.resolution, "unresolved"); assert.ok(r.error); assert.equal(models[0], "muse-wonder-1.0");
-    globalThis.fetch = (async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ resolution: "prefer_a", evidence_quote: "the registry is always right", reason: "authority" }) } }] }))) as unknown as typeof fetch;
-    const r2 = await reviewConflict(a, b, new Map([["https://blog", "It was disclosed on February 27, 2025 privately."]]));
-    assert.equal(r2.resolution, "unresolved", "a preference without a verbatim quote is not accepted"); assert.equal(r2.grounded, false);
-  } finally { globalThis.fetch = orig; }
 });
 
 test("repository lane tolerates fixes stored before the audit trail existed (no events, no files)", () => {

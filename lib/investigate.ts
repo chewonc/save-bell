@@ -5,7 +5,7 @@
 // Bounded: at most 6 rounds and 12 file reads, 24 kB per tool result. Nothing is executed; repository text is data.
 import type { Claim, WatchedRepo } from "./schema";
 import { readFile, tree } from "./repo";
-import { READ_ONLY, UNTRUSTED, sparkTools, type ToolTrace } from "./spark";
+import { READ_ONLY, UNTRUSTED, llmTools, type ToolTrace } from "./llm";
 
 export type Investigation = { added: string[]; trace: ToolTrace[]; tokens: number; ms: number; model: string; rationale: string };
 
@@ -56,7 +56,7 @@ export async function investigate(repo: WatchedRepo, sha: string, claim: Claim, 
     { name: "read_file", description: "Read numbered lines of one file (default: 200 lines starting at from_line).", parameters: { type: "object", properties: { path: { type: "string" }, from_line: { type: "integer" }, to_line: { type: "integer" } }, required: ["path"], additionalProperties: false } },
   ];
   const finishTool = { name: "finish", description: "Report the repository files that decide the conditions (max 8 paths) with a short rationale.", parameters: { type: "object", properties: { files: { type: "array", items: { type: "string" } }, rationale: { type: "string" } }, required: ["files", "rationale"], additionalProperties: false } };
-  const r = await sparkTools<{ files: string[]; rationale: string }>({ name: "investigate", maxSteps: 6, tools, finishTool, run,
+  const r = await llmTools<{ files: string[]; rationale: string }>({ name: "investigate", maxSteps: 6, tools, finishTool, run,
     system: `${READ_ONLY}\n${UNTRUSTED}\nYou are investigating whether a repository meets the conditions of a security report. Use the tools to find the code that decides each condition: entry points for untrusted input, routes and their guards, configuration, an agent's tool definitions and permissions, call sites of the affected APIs. Prefer search, then read only what matters. Then call finish with the deciding files. Do not decide the verdict.`,
     user: `REPORT (untrusted): ${claim.summary}\nCONDITIONS:\n${claim.conditions.map((c) => `- ${c.id}: ${c.text}`).join("\n")}\nTECH: ${claim.tech_tags.join(", ")}; PACKAGES: ${claim.packages.map((p) => p.name).join(", ") || "none"}\nREPOSITORY ${repo.repo}${repo.subdir ? ` (only under ${repo.subdir}/)` : ""} at ${sha.slice(0, 7)}: ${files.length} files. Already in the listing: ${already.slice(0, 30).join(", ") || "none"}.` });
   if (!r.out) return { added: [], trace: r.trace, tokens: r.tokens, ms: r.ms, model: r.model, rationale: "investigation ended without a result" };
