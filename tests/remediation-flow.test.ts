@@ -44,9 +44,8 @@ test("cancel revokes the runner credential in the backend: the runner can no lon
   const c = await cancelRun(q, "tester");
   assert.equal(c.status, "cancelled"); assert.equal(c.nonce_hash, null);
   assert.match(c.events.at(-1)!.detail, /credential is revoked/);
-  const req = new Request("http://x", { headers: { "x-argus-runner-secret": "s" } });
-  const { env } = await import("../lib/env"); env.ARGUS_RUNNER_SECRET = "s";
-  assert.throws(() => checkRunnerAuth(c, req, "any-nonce"), /nonce invalid or already used/);
+  const claims = { repository: c.repo, job_workflow_ref: "chewonc/save-bell/.github/workflows/savebell-runner.yml@refs/heads/main" };
+  assert.throws(() => checkRunnerAuth(c, claims, "any-nonce"), /nonce invalid or already used/);
 });
 
 test("cancelling an automatic merge leaves the pull request open", async () => {

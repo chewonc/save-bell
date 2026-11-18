@@ -1,4 +1,4 @@
-// One definition of a stalled remediation run, shared by the run route (may re-authorize), the Muse Code panel
+// One definition of a stalled remediation run, shared by the run route (may re-authorize), the fix runner panel
 // (shows the authorize buttons again) and the finding actions (shows "Fix stalled" + Retry instead of "in progress").
 // A run is stalled when the runner never reported back: still "queued" 20 minutes after it was dispatched.
 // Dependency-free so client components can import it.

@@ -1,18 +1,21 @@
-// Automated remediation runner. Orchestrates Meta Muse Code editing a repository inside an isolated GitHub Actions
-// job (.github/workflows/remediate.yml + scripts/remediate/run.mjs). The production server never executes
-// repository code; the runner never pushes. Flow:
-//   user authorizes (mode pr|push) -> startRun() dispatches the workflow with {fix_id, nonce}
-//   runner -> POST /api/fix/:id/runner          (nonce + ARGUS_RUNNER_SECRET) -> brief: allowed files, conditions, clone token
+// Automated fix runner. It runs in the USER's own GitHub Actions, never on the SaveBell server and never on the owner's
+// account: SaveBell starts (workflow_dispatch, App permission Actions: write only) the user's small caller
+// workflow (.github/workflows/savebell.yml, see callerWorkflow()), which runs SaveBell's reusable workflow
+// (.github/workflows/savebell-runner.yml + scripts/runner/run.mjs), and the edit is made either by rules (apply the
+// previewed dependency bump; no AI) or by the AI the user configured in their own repository secrets. SaveBell never
+// receives or stores an AI key. The runner never pushes. Flow:
+//   user authorizes (mode pr|push) -> startRun() starts savebell.yml in the user's repository with {fix_id, nonce, base_sha}
+//   runner -> POST /api/fix/:id/runner          (Actions OIDC token + nonce) -> brief: allowed files, conditions, preview
 //   runner -> POST /api/fix/:id/runner/result   -> acceptResult(): allowlist, syntax, static assessment, tests gate;
 //            the validated patch then WAITS (status "validated") for the user to review and approve that exact patch
 //   user   -> approveValidated(): branch + commit + PR through the GitHub App (lib/fix-apply.ts). Push mode merges only
 //            after the repository's own check-runs succeed (tryMerge, re-queued by QStash) and only if branch protection allows.
-//   user   -> cancelRun(): revokes the runner's nonce (no brief, no result accepted) and cancels the Actions run.
+//   user   -> cancelRun(): revokes the runner's nonce (no brief, no result accepted) and tries to cancel the Actions run.
 import { createHash, randomBytes } from "node:crypto";
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const now = () => new Date().toISOString();
-import { FORBIDDEN_PATH, RunnerError, event, lockfileAllowed, mergeDecision, outsideAllowlist, validationSummary, type RunnerInstall, type RunnerLockfile, type RunnerTestSummary } from "./runner-gates";
-export { FORBIDDEN_PATH, RunnerError, checkRunnerAuth, event, mergeDecision, outsideAllowlist, runnerSecretOk } from "./runner-gates";
+import { FORBIDDEN_PATH, RUNNER_WORKFLOW_PATH, RunnerError, checkRunnerAuth, event, lockfileAllowed, mergeDecision, outsideAllowlist, validationSummary, type RunnerInstall, type RunnerLockfile, type RunnerTestSummary } from "./runner-gates";
+export { FORBIDDEN_PATH, RunnerError, checkRunnerAuth, event, mergeDecision, outsideAllowlist } from "./runner-gates";
 import { env, hasQStash, hasRunner } from "./env";
 import { applyFix } from "./fix-apply";
 import { assessFix } from "./fixassess";
@@ -20,7 +23,8 @@ import { fixableFiles, gitBlobSha, syntaxCheck, unifiedDiff } from "./fix";
 import { scopedRepoOctokit, scopedRepoToken } from "./github-app";
 import { createAgentToken, revokeRunnerTokens } from "./agent-token";
 import { notifyFix } from "./notify";
-import { readFile, tree } from "./repo";
+import { headSha, readFile, tree } from "./repo";
+import { CALLER_FILE, CALLER_PATH, callerWorkflow } from "./runner-caller";
 import type { Assessment, Finding, Fix } from "./schema";
 import { store } from "./store";
 import { cancellable, cancelRun, checkApprovable, patchVersion } from "./remediation-control";
@@ -34,60 +38,99 @@ export function allowedFilesFor(a: Assessment, fix: Fix): string[] {
   return [...set].filter((p) => !FORBIDDEN_PATH.test(p)).slice(0, 12);
 }
 
-/** Step 1: user authorization -> dispatch the workflow. Session, allow_pr, installation and FIX_ENABLED are checked by the route. */
-export async function startRun(fix: Fix, a: Assessment, mode: "pr" | "push" | "branch" | "preview", userLogin: string): Promise<Fix> {
-  if (!hasRunner()) throw new RunnerError("automated remediation is not configured on this deployment (FIX_ENABLED, RUNNER_DISPATCH_TOKEN, ARGUS_RUNNER_SECRET)", 503);
+export type RunnerSetup = { installed: boolean; path: string; workflow: string; checked_branch: string | null; error: string | null };
+/** Is the caller workflow on the default branch? SaveBell starts it there. */
+export async function runnerSetup(repo: string, defaultBranch: string): Promise<RunnerSetup> {
+  const base = { path: CALLER_PATH, workflow: callerWorkflow(), checked_branch: defaultBranch };
+  try {
+    const sha = await headSha(repo, defaultBranch);
+    const text = await readFile(repo, sha, CALLER_PATH);
+    const ok = !!text && text.includes(RUNNER_WORKFLOW_PATH) && /workflow_dispatch:/.test(text) && /id-token:\s*write/.test(text);
+    return { ...base, installed: ok, error: text && !ok ? `${CALLER_PATH} exists but does not call ${RUNNER_WORKFLOW_PATH} on workflow_dispatch with id-token: write` : null };
+  } catch (e) { return { ...base, installed: false, error: String((e as Error).message ?? e).slice(0, 200) }; }
+}
+
+export { CALLER_PATH, callerWorkflow, runnerClaims } from "./runner-caller";
+export { checkRunnerAuth as checkRunnerClaims };
+
+/** Step 1: user authorization -> workflow_dispatch of savebell.yml in the user's own repository. Session, allow_pr, installation, setup and FIX_ENABLED are checked by the route. */
+export async function startRun(fix: Fix, a: Assessment, mode: "pr" | "push" | "branch" | "preview", userLogin: string, installationId: number): Promise<Fix> {
+  if (!hasRunner()) throw new RunnerError("automated fixes are not configured on this deployment (FIX_ENABLED, GitHub App)", 503);
   const nonce = randomBytes(24).toString("base64url");
   const allowed = allowedFilesFor(a, fix);
   if (!allowed.length) throw new RunnerError("no editable files: only lockfiles, env or workflow files were cited", 400);
-  let next: Fix = { ...fix, status: "queued", mode, allowed_files: allowed, nonce_hash: sha256(nonce), approved_at: now(), error: null, agent: "muse-code",
-    runner: { run_url: null, dispatched_at: now(), started_at: null, finished_at: null, muse_version: null, steps: null, summary: "", changed_files: [], rejected_files: [], tests: null, error: null } };
-  next = event(next, userLogin, "authorized", `mode=${mode}; Muse Code may edit only: ${allowed.join(", ")}`);
-  const r = await fetch(`https://api.github.com/repos/${env.RUNNER_REPO}/actions/workflows/${env.RUNNER_WORKFLOW}/dispatches`, {
-    method: "POST", headers: { authorization: `Bearer ${env.RUNNER_DISPATCH_TOKEN}`, accept: "application/vnd.github+json", "content-type": "application/json", "user-agent": USER_AGENT },
-    body: JSON.stringify({ ref: "main", inputs: { fix_id: fix.id, nonce } }),
-  });
-  if (r.status !== 204) {
-    const msg = (await r.text()).slice(0, 200);
-    next = event({ ...next, status: "failed", nonce_hash: null, error: `runner dispatch failed (${r.status}): ${msg}` }, "argus", "dispatch_failed", msg);
+  let next: Fix = { ...fix, status: "queued", mode, allowed_files: allowed, nonce_hash: sha256(nonce), approved_at: now(), error: null, agent: "runner",
+    runner: { run_url: null, dispatched_at: now(), started_at: null, finished_at: null, muse_version: null, agent: null, steps: null, summary: "", changed_files: [], rejected_files: [], tests: null, error: null } };
+  next = event(next, userLogin, "authorized", `mode=${mode}; the runner may edit only: ${allowed.join(", ")}`);
+  const [owner, name] = fix.repo.split("/");
+  let status = 0, msg = "", runUrl: string | null = null;
+  try {
+    // workflow_dispatch needs only Actions: write (it cannot read or change code); the token is scoped to this one
+    // repository and used for this one call. The run starts on the default branch, where the caller workflow must be.
+    const ref = (await store.getRepo(fix.repo_key))?.default_branch ?? "main";
+    const token = await scopedRepoToken(installationId, name, { actions: "write" });
+    const r = await fetch(`https://api.github.com/repos/${owner}/${name}/actions/workflows/${CALLER_FILE}/dispatches`, {
+      method: "POST", headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "content-type": "application/json", "user-agent": USER_AGENT },
+      // Non-secret: anyone who can read this repository's Actions can see it. Using it also needs this repository's OIDC token.
+      body: JSON.stringify({ ref, inputs: { fix_id: fix.id, nonce, base_sha: fix.base_sha, savebell_url: env.APP_URL } }),
+    });
+    status = r.status;
+    const text = await r.text();
+    // GitHub answers 204, or 200 with the new run's URL when it reports run details.
+    if (status === 200) { try { const u = (JSON.parse(text) as { html_url?: string }).html_url; if (u && /^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+/.test(u)) runUrl = u; } catch { /* no details */ } }
+    msg = status === 200 || status === 204 ? "" : text.slice(0, 200);
+  } catch (e) { msg = String((e as Error).message ?? e).slice(0, 200); }
+  if (status !== 200 && status !== 204) {
+    next = event({ ...next, status: "failed", nonce_hash: null, error: `runner dispatch failed (${status || "error"}): ${msg}` }, "argus", "dispatch_failed", msg);
     await store.putFix(next);
-    throw new RunnerError(`could not start the runner (GitHub ${r.status}): ${msg}`, 502);
+    throw new RunnerError(`could not start the runner in ${fix.repo} (GitHub ${status || "error"}): ${msg}`, 502);
   }
-  next = event(next, "argus", "dispatched", `workflow ${env.RUNNER_WORKFLOW} in ${env.RUNNER_REPO}`, `https://github.com/${env.RUNNER_REPO}/actions/workflows/${env.RUNNER_WORKFLOW}`);
+  if (runUrl) next = { ...next, runner: { ...next.runner!, run_url: runUrl } };
+  next = event(next, "argus", "dispatched", `started ${CALLER_PATH} in ${fix.repo}; the fix runs in your GitHub Actions`, runUrl ?? `https://github.com/${fix.repo}/actions/workflows/${CALLER_FILE}`);
   await store.putFix(next);
-  await store.log({ kind: "fix", source: "runner", detail: `dispatched Muse Code runner for ${fix.repo} (mode ${mode})`, ref: fix.assessment_id });
+  await store.log({ kind: "fix", source: "runner", detail: `dispatched the fix runner to ${fix.repo} (mode ${mode})`, ref: fix.assessment_id });
   return next;
 }
 
-/** Step 2: the brief the runner needs: a short-lived installation token (clone only) and a per-fix MCP agent token (read-only tools). */
-export async function briefFor(fix: Fix, a: Assessment, f: Finding | null, installationId: number, runUrl: string | null): Promise<Record<string, unknown>> {
+/** Step 2: the brief the runner needs. No clone token: the runner checks out with its own repository's GITHUB_TOKEN. */
+export async function briefFor(fix: Fix, a: Assessment, f: Finding | null, runUrl: string | null): Promise<Record<string, unknown>> {
   if (fix.status !== "queued") throw new RunnerError(`fix is ${fix.status}, not queued`, 409);
-  // Read-only and limited to this one repository: the runner clones, it never writes.
-  const cloneToken = await scopedRepoToken(installationId, fix.repo.split("/")[1], { contents: "read", metadata: "read" });
-  const mcpToken = await createAgentToken(fix.user_id, `muse-code runner ${fix.id.slice(0, 8)}`);
+  // A per-fix MCP token (read-only tools) so a coding agent in the runner can look up the cited evidence; revoked on result.
+  const mcpToken = await createAgentToken(fix.user_id, `fix runner ${fix.id.slice(0, 8)}`);
   const w = await store.getRepo(fix.repo_key);
   const subdir = a.repo.split("/").slice(2).join("/");
   let next: Fix = { ...fix, status: "running", runner: { ...fix.runner!, started_at: now(), run_url: runUrl ?? fix.runner?.run_url ?? null } };
-  next = event(next, "runner", "started", "isolated runner fetched the brief", runUrl);
+  next = event(next, "runner", "started", "the runner in your GitHub Actions fetched the brief", runUrl);
   await store.putFix(next);
+  const allowed = new Set(fix.allowed_files);
   return {
     fix_id: fix.id, repo: fix.repo, base_sha: fix.base_sha, default_branch: w?.default_branch ?? "main", subdir,
-    clone_token: cloneToken, allowed_files: fix.allowed_files,
+    allowed_files: fix.allowed_files,
     finding: { ids: f?.ids ?? [], title: f?.title ?? "", summary: f?.claim?.summary ?? "", verdict: a.verdict, tier: a.tier },
     conditions: a.conditions.map((c) => ({ id: c.id, state: c.state, text: c.text, evidence: c.evidence.map((e) => `${e.file}:${e.line ?? "?"}`) })),
     recommendations: a.recommendations.map((r) => r.text),
-    preview: { by: fix.model, summary: fix.summary, caveats: fix.caveats, patches: fix.files.filter((x) => x.patch).map((x) => ({ path: x.path, patch: x.patch })) },
+    // The previewed change: patches as a hint for an AI agent, and full file contents so the no-AI "rules" agent can apply it.
+    preview: { by: fix.model, summary: fix.summary, caveats: fix.caveats, patches: fix.files.filter((x) => x.patch).map((x) => ({ path: x.path, patch: x.patch })),
+      files: fix.files.filter((x) => allowed.has(x.path) && typeof x.after === "string").map((x) => ({ path: x.path, after: x.after })) },
     mcp: { url: `${env.APP_URL}/api/mcp`, token: mcpToken, assessment_id: a.id },
     callback: `${env.APP_URL}/api/fix/${fix.id}/runner/result`,
     limits: { max_model_steps: 40, test_timeout_s: 600 },
   };
 }
 
+/** The model label stored on a runner-made fix: "runner rules", "runner model qwen2.5-coder", ... */
+export function runnerModelLabel(res: { agent?: string; muse_version?: string }): string {
+  const agent = typeof res.agent === "string" && res.agent.trim() ? res.agent.trim().slice(0, 80) : res.muse_version ? `muse-code ${res.muse_version}` : "rules";
+  return `runner ${agent}`;
+}
+
 export type RunnerResult = {
   ok: boolean; error?: string; muse_version?: string; steps?: number; summary?: string; run_url?: string;
+  /** Who made the edit inside the runner: "rules", "model <name>", or "command <name>". Free text, display only. */
+  agent?: string;
   files?: { path: string; after: string }[]; changed_files?: string[];
   tests?: { command: string | null; executed: boolean; exit_code: number | null; log: string; duration_ms: number | null; summary?: RunnerTestSummary };
-  // lockfiles regenerated by the runner itself (never by Muse Code) after a manifest change; see lockfileAllowed()
+  // lockfiles regenerated by the runner itself (never by the agent) after a manifest change; see lockfileAllowed()
   lockfiles?: RunnerLockfile[];
   install?: RunnerInstall;
 };
@@ -99,7 +142,7 @@ export async function acceptResult(fix: Fix, a: Assessment, f: Finding | null, i
   const tests = res.tests ? { ...res.tests, log: (res.tests.log ?? "").slice(-6000), summary: res.tests.summary ?? null } : null;
   const install = res.install ? { ...res.install, log: (res.install.log ?? "").slice(-4000) } : null;
   const validation_label = validationSummary({ install, tests }).label;
-  let next: Fix = { ...fix, nonce_hash: null, runner: { ...fix.runner!, finished_at: now(), muse_version: res.muse_version ?? null, steps: res.steps ?? null, summary: (res.summary ?? "").slice(0, 2000), run_url: res.run_url ?? fix.runner?.run_url ?? null, tests, install, validation_label, changed_files: (res.changed_files ?? []).slice(0, 50), rejected_files: [] } };
+  let next: Fix = { ...fix, nonce_hash: null, runner: { ...fix.runner!, finished_at: now(), muse_version: res.muse_version ?? null, agent: typeof res.agent === "string" ? res.agent.slice(0, 80) : null, steps: res.steps ?? null, summary: (res.summary ?? "").slice(0, 2000), run_url: res.run_url ?? fix.runner?.run_url ?? null, tests, install, validation_label, changed_files: (res.changed_files ?? []).slice(0, 50), rejected_files: [] } };
   const fail = async (reason: string, status: Fix["status"] = "validation_failed") => {
     next = event({ ...next, status, error: reason, runner: { ...next.runner!, error: reason } }, "argus", status, reason);
     await store.putFix(next);
@@ -109,11 +152,11 @@ export async function acceptResult(fix: Fix, a: Assessment, f: Finding | null, i
   };
   if (!res.ok) return fail(`runner failed: ${(res.error ?? "unknown").slice(0, 300)}`, "failed");
   const changed = res.files ?? [];
-  if (!changed.length) return fail("Muse Code made no changes");
+  if (!changed.length) return fail("the runner made no changes");
   // The allowlist is enforced here, on the result, regardless of what the runner reports about itself.
   const outside = outsideAllowlist([...new Set([...(res.changed_files ?? []), ...changed.map((c) => c.path)])], fix.allowed_files);
   if (outside.length) { next.runner!.rejected_files = outside; return fail(`changes outside the authorized files were rejected: ${outside.join(", ")}`); }
-  // Lockfiles: only the runner may regenerate them (never Muse Code), and only next to a manifest that changed.
+  // Lockfiles: only the runner may regenerate them (never the agent), and only next to a manifest that changed.
   const lockfiles = res.lockfiles ?? [];
   const badLock = lockfiles.filter((l) => !lockfileAllowed(l.path, changed.map((c) => c.path), l.regenerated_by));
   if (badLock.length) { next.runner!.rejected_files = badLock.map((l) => l.path); return fail(`lockfile changes not allowed: ${badLock.map((l) => l.path).join(", ")}`); }
@@ -129,13 +172,13 @@ export async function acceptResult(fix: Fix, a: Assessment, f: Finding | null, i
     before.set(c.path, was);
     files.push({ path: c.path, before_sha: gitBlobSha(was), patch: unifiedDiff(c.path, was, c.after, fix.base_sha), after: c.after, hunks: [] });
   }
-  if (!files.length) return fail("Muse Code's result is identical to the assessed files");
+  if (!files.length) return fail("the runner's result is identical to the assessed files");
   const syntax = files.map((x) => syntaxCheck(x.path, x.after));
-  next = { ...next, files, syntax_check: syntax, rejected_hunks: [], summary: res.summary?.trim() ? res.summary.slice(0, 1000) : fix.summary, model: `muse-code${res.muse_version ? " " + res.muse_version : ""}` };
+  next = { ...next, files, syntax_check: syntax, rejected_hunks: [], summary: res.summary?.trim() ? res.summary.slice(0, 1000) : fix.summary, model: runnerModelLabel(res) };
   if (syntax.some((s) => !s.ok)) return fail(`syntax check failed: ${syntax.filter((s) => !s.ok).map((s) => s.path).join(", ")}`);
   next.assessment = await assessFix(a, f, next, before).catch(() => null);
   if (tests?.executed && tests.exit_code !== 0) return fail(`repository tests failed in the runner (${tests.command}, exit ${tests.exit_code}); nothing was pushed`);
-  // Nothing is written yet: Muse Code's patch can differ from the preview the user saw, so the user now reviews and
+  // Nothing is written yet: the runner's patch can differ from the preview the user saw, so the user now reviews and
   // approves THIS patch (patch_version) before any repository write (approveValidated).
   next = event({ ...next, status: "validated", patch_version: patchVersion(files) }, "argus", "validated", tests?.executed ? `tests executed in the isolated runner: ${tests.command} (exit 0); syntax checked; static assessment ${next.assessment?.label ?? "n/a"}; awaiting your approval` : `no test command detected, no tests executed; syntax checked; static assessment ${next.assessment?.label ?? "n/a"}; awaiting your approval`);
   await store.putFix(next);
@@ -154,7 +197,7 @@ export async function approveValidated(fix: Fix, a: Assessment, f: Finding | nul
   const tests = fix.runner?.tests ?? null;
   try {
     const testsNote = tests?.executed ? `Repository tests executed in an isolated GitHub Actions runner: \`${tests.command}\` exited 0.` : "No test command was detected, so no tests were executed. Checks performed: syntax parse and static remediation assessment only.";
-    const applied = await applyFix(next, a, f, installationId, { draft: opts.mode !== "push", openPr: opts.mode !== "branch", author: "Meta Muse Code (automated remediation)", testsNote }); // PR mode: a draft; push mode needs a mergeable PR
+    const applied = await applyFix(next, a, f, installationId, { draft: opts.mode !== "push", openPr: opts.mode !== "branch", author: `SaveBell fix runner in your GitHub Actions (${next.runner?.agent ?? "rules"})`, testsNote }); // PR mode: a draft; push mode needs a mergeable PR
     const keep = { events: next.events, runner: next.runner, mode: next.mode, agent: next.agent, allowed_files: next.allowed_files, patch_version: next.patch_version };
     if (applied.status === "branch_pushed") {
       next = event({ ...next, ...applied, ...keep }, "argus", "branch_pushed", `pushed ${applied.branch} (no pull request)`, applied.commit_url);
@@ -208,7 +251,7 @@ export async function tryMerge(fix: Fix, installationId: number, attempt: number
   try {
     // A PR approval never authorizes a merge: only a grant that explicitly includes merging, still inside its window.
     await assertWrite(fix.id, { kind: "merge", repo: fix.repo, branch: fix.branch });
-    const m = await ok.rest.pulls.merge({ owner, repo, pull_number: fix.pr_number, merge_method: "squash", commit_title: `SaveBell automated fix ${fix.id.slice(0, 8)} (Meta Muse Code)` });
+    const m = await ok.rest.pulls.merge({ owner, repo, pull_number: fix.pr_number, merge_method: "squash", commit_title: `SaveBell automated fix ${fix.id.slice(0, 8)} ` });
     const url = `https://github.com/${fix.repo}/commit/${m.data.sha}`;
     next = event({ ...next, status: "merged", merge_sha: m.data.sha, commit_url: url }, "argus", "merged", `squash-merged into the default branch after ${runs.filter((r) => r.conclusion === "success").length} passing check-run(s)${testsPassed ? " and passing runner tests" : ""}`, url);
     await store.putFix(next);

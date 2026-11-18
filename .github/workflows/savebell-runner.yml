@@ -1,0 +1,60 @@
+# SaveBell fix runner: a REUSABLE workflow. It runs in the user's own repository, called by their small
+# .github/workflows/savebell.yml (SaveBell shows the exact file), when they authorize a fix in SaveBell.
+# - No SaveBell secret: the runner proves which repository and workflow it is with GitHub's OIDC token.
+# - No owner AI key: by default the edit is made by rules (the previewed dependency bump, no AI). If the user sets
+#   SAVEBELL_AGENT=model or command in their own repository, their own model or coding agent makes the edit.
+# - It never pushes. SaveBell validates the result and opens a pull request only after the user approves the final diff.
+name: savebell-runner
+on:
+  workflow_call:
+    inputs:
+      payload: { description: "the caller's workflow_dispatch inputs as JSON (fix_id, nonce, base_sha, savebell_url)", required: true, type: string }
+      agent: { description: "rules | model | command", required: false, type: string, default: "" }
+      ai_base_url: { description: "model: OpenAI-compatible base URL, e.g. https://api.openai.com/v1", required: false, type: string, default: "" }
+      ai_model: { description: "model: model name", required: false, type: string, default: "" }
+      agent_cmd: { description: "command: shell command that runs your coding agent; the prompt file path is in $SAVEBELL_PROMPT_FILE", required: false, type: string, default: "" }
+      agent_key_env: { description: "command: env var name your agent reads its key from, e.g. ANTHROPIC_API_KEY", required: false, type: string, default: "" }
+      runner_ref: { description: "ref of the SaveBell runner scripts", required: false, type: string, default: "main" }
+    secrets:
+      SAVEBELL_AI_API_KEY: { required: false }
+      SAVEBELL_AGENT_KEY: { required: false }
+permissions:
+  contents: read
+  id-token: write
+concurrency: { group: "savebell-${{ fromJSON(inputs.payload).fix_id }}", cancel-in-progress: false }
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the assessed commit
+        uses: actions/checkout@v4
+        with: { ref: "${{ fromJSON(inputs.payload).base_sha }}", path: repo, persist-credentials: false }
+      - name: Check out the SaveBell runner
+        uses: actions/checkout@v4
+        with: { repository: chewonc/save-bell, ref: "${{ inputs.runner_ref }}", path: .savebell, sparse-checkout: scripts/runner, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Make the fix
+        env:
+          SAVEBELL_PAYLOAD: ${{ inputs.payload }}
+          REPO_DIR: ${{ github.workspace }}/repo
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SAVEBELL_AGENT: ${{ inputs.agent }}
+          SAVEBELL_AI_BASE_URL: ${{ inputs.ai_base_url }}
+          SAVEBELL_AI_MODEL: ${{ inputs.ai_model }}
+          SAVEBELL_AI_API_KEY: ${{ secrets.SAVEBELL_AI_API_KEY }}
+          SAVEBELL_AGENT_CMD: ${{ inputs.agent_cmd }}
+          SAVEBELL_AGENT_KEY_ENV: ${{ inputs.agent_key_env }}
+          SAVEBELL_AGENT_KEY: ${{ secrets.SAVEBELL_AGENT_KEY }}
+        run: node .savebell/scripts/runner/run.mjs
+      - name: Report a setup failure to SaveBell
+        if: failure()
+        env:
+          SAVEBELL_PAYLOAD: ${{ inputs.payload }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        # If the runner already reported its own failure the nonce is spent and this gets 401, which is fine.
+        run: |
+          if [ -f .savebell/scripts/runner/run.mjs ]; then node .savebell/scripts/runner/run.mjs --report-setup-failure || true; fi

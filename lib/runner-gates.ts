@@ -8,7 +8,7 @@ const now = () => new Date().toISOString();
 
 export class RunnerError extends Error { constructor(msg: string, public status = 400) { super(msg); } }
 
-// ---- Runner result fields (sent by scripts/remediate/run.mjs) ----
+// ---- Runner result fields (sent by scripts/runner/run.mjs) ----
 export type RunnerInstall = { command: string | null; executed: boolean; exit_code: number | null; log: string };
 export type RunnerTestSummary = { framework: string; total: number; passed: number; failed: number; names: string[] } | null;
 export type RunnerLockfile = { path: string; after: string; regenerated_by: "runner"; manifest: string };
@@ -72,15 +72,19 @@ export function mergeDecision(runs: { status: string; conclusion: string | null 
   return "merge";
 }
 
-/** Constant-length comparison of the shared runner secret header. */
-export function runnerSecretOk(req: Request): boolean {
-  const secret = req.headers.get("x-argus-runner-secret") ?? "";
-  return !!env.ARGUS_RUNNER_SECRET && secret.length === env.ARGUS_RUNNER_SECRET.length && sha256(secret) === sha256(env.ARGUS_RUNNER_SECRET);
-}
+/** The reusable workflow every runner must come from (OIDC claim job_workflow_ref = "<repo>/<path>@<ref>"). */
+export const RUNNER_WORKFLOW_PATH = ".github/workflows/savebell-runner.yml";
 
-export function checkRunnerAuth(fix: Fix, req: Request, nonce: string | null): void {
-  const secret = req.headers.get("x-argus-runner-secret") ?? "";
-  if (!env.ARGUS_RUNNER_SECRET || secret.length !== env.ARGUS_RUNNER_SECRET.length || sha256(secret) !== sha256(env.ARGUS_RUNNER_SECRET)) throw new RunnerError("runner secret mismatch", 401);
+/**
+ * Runner callbacks carry no shared secret. They are allowed only when GitHub's signed Actions token (already verified,
+ * lib/runner-oidc.ts) says the run belongs to the fix's own repository and uses SaveBell's reusable runner workflow, and
+ * the single-use nonce matches.
+ */
+export function checkRunnerAuth(fix: Pick<Fix, "repo" | "nonce_hash">, claims: { repository: string; job_workflow_ref?: string } | null, nonce: string | null): void {
+  if (!claims) throw new RunnerError("runner token missing", 401);
+  if (claims.repository.toLowerCase() !== fix.repo.toLowerCase()) throw new RunnerError("runner token belongs to a different repository", 401);
+  const prefix = `${env.RUNNER_REPO}/${RUNNER_WORKFLOW_PATH}@`.toLowerCase();
+  if (!(claims.job_workflow_ref ?? "").toLowerCase().startsWith(prefix)) throw new RunnerError(`runner must use the SaveBell workflow ${env.RUNNER_REPO}/${RUNNER_WORKFLOW_PATH}`, 401);
   if (!nonce || !fix.nonce_hash || sha256(nonce) !== fix.nonce_hash) throw new RunnerError("nonce invalid or already used", 401);
 }
 

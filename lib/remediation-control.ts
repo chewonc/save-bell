@@ -45,9 +45,13 @@ export async function cancelRun(fix: Fix, userLogin: string): Promise<Fix> {
   }
   let actions = "no Actions run id known yet; the runner's credential is revoked, so it cannot fetch the repository or report a result";
   const runId = /\/actions\/runs\/(\d+)/.exec(fix.runner?.run_url ?? "")?.[1];
-  if (runId && env.RUNNER_DISPATCH_TOKEN) {
-    const r = await fetch(`https://api.github.com/repos/${env.RUNNER_REPO}/actions/runs/${runId}/cancel`, { method: "POST", headers: { authorization: `Bearer ${env.RUNNER_DISPATCH_TOKEN}`, accept: "application/vnd.github+json", "user-agent": USER_AGENT } }).catch(() => null);
-    actions = r?.status === 202 ? `GitHub Actions run ${runId} cancelled` : r?.status === 409 ? `GitHub Actions run ${runId} had already finished` : `could not cancel GitHub Actions run ${runId} (${r?.status ?? "network error"}); its credential is revoked, so it cannot write`;
+  if (runId) {
+    // The run is in the user's own repository. Cancelling it needs the App's Actions: write permission, which many
+    // installations do not grant; without it the revoked nonce is what stops the run from fetching or reporting anything.
+    const inst = (await store.getRepo(fix.repo_key))?.installation_id ?? (await store.getUserRepo(fix.user_id, fix.repo_key))?.installation_id ?? null;
+    const token = inst && env.FIX_ENABLED ? await import("./github-app").then((m) => m.scopedRepoToken(inst, fix.repo.split("/")[1], { actions: "write" })).catch(() => null) : null;
+    const r = token ? await fetch(`https://api.github.com/repos/${fix.repo}/actions/runs/${runId}/cancel`, { method: "POST", headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": USER_AGENT } }).catch(() => null) : null;
+    actions = r?.status === 202 ? `GitHub Actions run ${runId} cancelled` : r?.status === 409 ? `GitHub Actions run ${runId} had already finished` : `could not cancel GitHub Actions run ${runId} (${r?.status ?? (token ? "network error" : "no Actions permission")}); its credential is revoked, so it cannot fetch the brief or report a result`;
   }
   const next = event({ ...fix, status: "cancelled", nonce_hash: null, grant: revoke(fix.grant), error: "cancelled by the user", runner: fix.runner ? { ...fix.runner, finished_at: now(), error: "cancelled by the user" } : fix.runner }, userLogin, "cancelled", `${c.why} ${actions}.`);
   await store.putFix(next);

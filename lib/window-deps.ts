@@ -12,7 +12,7 @@ import { isVerified } from "./labels";
 import { sendPushTo } from "./push";
 import { cancellable, cancelRun } from "./remediation-control";
 import { reverify } from "./reverify";
-import { approveValidated, startRun } from "./runner";
+import { approveValidated, runnerSetup, startRun } from "./runner";
 import type { Assessment, Notification } from "./schema";
 import { deriveSeverity } from "./severity";
 import { isSystemRepo } from "./session";
@@ -72,7 +72,7 @@ export const windowDeps = (): Deps => ({
 
   async runnerBlocker(repoKey, uid) {
     if (!env.FIX_ENABLED) return "automated fixes are turned off on this deployment";
-    if (!hasRunner()) return "the isolated test runner is not configured on this deployment";
+    if (!hasRunner()) return "automated fixes are not configured on this deployment";
     if (await isSystemRepo(repoKey)) return "shared demo repositories never receive fixes";
     const ur = await store.getUserRepo(uid, repoKey);
     if (!ur || ur.paused || ur.access_lost) return "the repository is no longer monitored or accessible";
@@ -87,9 +87,15 @@ export const windowDeps = (): Deps => ({
     const a = await store.getAssessment(fix.assessment_id);
     if (!a) throw new Error("assessment missing");
     // Same single-start claim as the Fix dialog: a second caller cannot dispatch a second runner for this attempt.
+    const w = await store.getRepo(fix.repo_key);
+    const inst = w?.installation_id ?? (await store.getUserRepo(fix.user_id, fix.repo_key))?.installation_id;
+    if (!inst) throw new Error("the repository is not connected through the GitHub App");
+    // The runner lives in the user's own GitHub Actions: without the caller workflow nothing would run.
+    const setup = await runnerSetup(fix.repo, w?.default_branch ?? "main");
+    if (!setup.installed) throw new Error(`the SaveBell runner workflow is not set up in ${fix.repo} (${setup.path})`);
     if (!(await store.claim(`run:${fix.id}:${fix.events.length}:${fix.status}`))) throw new Error("this fix is already starting");
-    // Preview mode: the runner clones read-only and the patch waits for the user's approval. No repository write is authorized.
-    await startRun({ ...fix, window_run_id: runId }, a, "preview", ACTOR);
+    // Preview mode: the runner reads the repository in the user's Actions and the patch waits for the user's approval. No repository write is authorized.
+    await startRun({ ...fix, window_run_id: runId }, a, "preview", ACTOR, inst);
   },
 
   async fixState(fixId) {

@@ -49,7 +49,7 @@ export async function GET() {
       note: "If tick_schedule_detected is false, the /api/poll/tick schedule has never delivered; legacy per-source schedules (rss, kev) also run every other due poller as a fallback.",
     } },
     // Which optional capabilities this deployment has configured (booleans only, never values).
-    features: { ai_model: hasAI(), model: hasAI() ? env.AI_MODEL : null, sign_in: hasAuth(), github_app: hasGitHubApp(), fix_enabled: env.FIX_ENABLED, muse_code_runner: hasRunner(), web_push: hasPush(), google_translate: hasTranslate(), translation: hasTranslate() ? "google" : hasAI() ? "configured-model" : "static-dictionaries" },
+    features: { ai_model: hasAI(), model: hasAI() ? env.AI_MODEL : null, sign_in: hasAuth(), github_app: hasGitHubApp(), fix_enabled: env.FIX_ENABLED, fix_runner: hasRunner() ? "user-github-actions" : null, web_push: hasPush(), google_translate: hasTranslate(), translation: hasTranslate() ? "google" : hasAI() ? "configured-model" : "static-dictionaries" },
     // Model usage this month per call site (counts only; no prompts, outputs or keys). All zero when no model is
     // configured, which is the case on the hosted site: analysis there is done by rules.
     ai: { configured: hasAI(), month: new Date().toISOString().slice(0, 7), host: hasAI() ? apiHost() : null, by_stage: await usageSummary(undefined, USAGE_NAMES) },

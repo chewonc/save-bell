@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { lockfileAllowed, validationSummary } from "../lib/runner-gates";
 // @ts-expect-error plain ESM helper without types
-import { dependenciesChanged, lockfilesToRegenerate, parseTestSummary } from "../scripts/remediate/lib.mjs";
+import { dependenciesChanged, lockfilesToRegenerate, parseTestSummary } from "../scripts/runner/lib.mjs";
 
 test("lockfiles are regenerated only next to a changed package.json, and only when dependencies changed", () => {
   assert.deepEqual(lockfilesToRegenerate(["package.json", "src/a.ts"], ["package.json", "package-lock.json"]), [{ manifest: "package.json", lockfile: "package-lock.json", dir: "" }]);
