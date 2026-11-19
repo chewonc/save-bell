@@ -18,6 +18,7 @@ on:
     secrets:
       SAVEBELL_AI_API_KEY: { required: false }
       SAVEBELL_AGENT_KEY: { required: false }
+      SAVEBELL_PREVIEW_BYPASS: { required: false }
 permissions:
   contents: read
   id-token: write
@@ -49,12 +50,14 @@ jobs:
           SAVEBELL_AGENT_CMD: ${{ inputs.agent_cmd }}
           SAVEBELL_AGENT_KEY_ENV: ${{ inputs.agent_key_env }}
           SAVEBELL_AGENT_KEY: ${{ secrets.SAVEBELL_AGENT_KEY }}
+          SAVEBELL_PREVIEW_BYPASS: ${{ secrets.SAVEBELL_PREVIEW_BYPASS }}
         run: node .savebell/scripts/runner/run.mjs
       - name: Report a setup failure to SaveBell
         if: failure()
         env:
           SAVEBELL_PAYLOAD: ${{ inputs.payload }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SAVEBELL_PREVIEW_BYPASS: ${{ secrets.SAVEBELL_PREVIEW_BYPASS }}
         # If the runner already reported its own failure the nonce is spent and this gets 401, which is fine.
         run: |
           if [ -f .savebell/scripts/runner/run.mjs ]; then node .savebell/scripts/runner/run.mjs --report-setup-failure || true; fi

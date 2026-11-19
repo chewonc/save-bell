@@ -20,7 +20,7 @@ const { fix_id: FIX_ID, nonce: NONCE, savebell_url: SAVEBELL_URL } = payload;
 const REPO_DIR = DRY_LOCAL_DIR || process.env.REPO_DIR;
 const t0 = Date.now();
 const log = (...a) => console.log(`[runner +${((Date.now() - t0) / 1000).toFixed(0)}s]`, ...a);
-const SECRET_ENV = ["SAVEBELL_PAYLOAD", "SAVEBELL_AI_API_KEY", "SAVEBELL_AGENT_KEY", "GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "SAVEBELL_TEST_OIDC"];
+const SECRET_ENV = ["SAVEBELL_PAYLOAD", "SAVEBELL_AI_API_KEY", "SAVEBELL_AGENT_KEY", "GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "SAVEBELL_TEST_OIDC", "SAVEBELL_PREVIEW_BYPASS"];
 const scrubbed = () => { const e = { ...process.env }; for (const k of SECRET_ENV) delete e[k]; return e; };
 const FORBIDDEN = /(^|\/)\.env|\.pem$|\.key$|(^|\/)\.github\/|(^|\/)\.muse\/|(^|\/)\.agents\/|(^|\/)\.mcp\.json$|(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Pipfile\.lock|Cargo\.lock|go\.sum)$/;
 
@@ -34,7 +34,9 @@ async function oidcToken() {
   return (await r.json()).value;
 }
 async function savebell(path, body) {
-  const r = await fetch(`${SAVEBELL_URL}${path}?nonce=${encodeURIComponent(NONCE)}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${await oidcToken()}` }, body: JSON.stringify(body) });
+  // Only for testing against a protected Vercel preview: the repository's SAVEBELL_PREVIEW_BYPASS secret passes Vercel's login wall.
+  const bypass = process.env.SAVEBELL_PREVIEW_BYPASS ? { "x-vercel-protection-bypass": process.env.SAVEBELL_PREVIEW_BYPASS } : {};
+  const r = await fetch(`${SAVEBELL_URL}${path}?nonce=${encodeURIComponent(NONCE)}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${await oidcToken()}`, ...bypass }, body: JSON.stringify(body) });
   const text = await r.text();
   if (!r.ok) throw new Error(`SaveBell ${path} -> ${r.status}: ${text.slice(0, 300)}`);
   return JSON.parse(text);
