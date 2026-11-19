@@ -9,6 +9,9 @@ import { draftPlannedFix } from "@/lib/fix-plan-draft";
 import { plansForAssessment } from "@/lib/fix-plan-server";
 import { canSee, currentUser } from "@/lib/session";
 import { store } from "@/lib/store";
+import { autoFixPermission } from "@/lib/fix-permissions";
+import { modeOf } from "@/lib/remediation-mode";
+import { githubUserToken } from "@/lib/session";
 
 export const maxDuration = 120;
 
@@ -25,6 +28,12 @@ export async function POST(req: Request) {
   const dep = plans.dependency;
   if (!dep.available) return Response.json({ error: dep.reason, plans }, { status: 409 });
   if (dep.plan_hash !== plan_hash) return Response.json({ error: "the fix plan changed since you reviewed it (new commit, advisory data or version); review the current plan and approve again", plans }, { status: 409 });
+  // G2: an approval is issued only when running the plan would be allowed right now: the App holds the permissions
+  // the saved destination needs and the user can write to the repository. Missing or unconfirmed: no approval.
+  const repoFull = a.repo.split("/").slice(0, 2).join("/");
+  const inst = (await store.getRepo(a.repo))?.installation_id ?? (await store.getUserRepo(user.id, a.repo))?.installation_id ?? null;
+  const perm = await autoFixPermission({ inst, repoFull, mode: modeOf(user.settings), userToken: await githubUserToken() });
+  if (!perm.ok) return Response.json({ error: perm.blocker, permission: perm.kind }, { status: 403 });
   const existing = await fixesFor(user.id, a.id);
   const active = existing.find((x) => ["queued", "running", "approved", "merging"].includes(x.status));
   if (active) return Response.json({ error: `a fix for this finding is already ${active.status}`, fix: active }, { status: 409 });

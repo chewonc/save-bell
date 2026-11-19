@@ -13,6 +13,9 @@ test("patch summary: files, tests, and never claims the security fix is verified
   const failed = fixChecks({ ...base, runner: { tests: { executed: true, exit_code: 1, summary: { framework: "node", total: 2, passed: 1, failed: 1, names: [] } } } } as Fix);
   assert.equal(failed[1].tone, "bad"); assert.match(failed[1].text, /1 test failed/);
   assert.match(fixChecks({ ...base, runner: null } as Fix)[1].text, /No tests were found/);
+  // A plan-based fix that has not run yet says so, instead of claiming no tests exist.
+  assert.match(fixChecks({ ...base, agent: "runner", kind: "dependency", runner: null } as Fix)[1].text, /Not run yet/);
+  assert.match(fixChecks({ ...base, agent: "runner", kind: "dependency", runner: { finished_at: "t", tests: null } } as unknown as Fix)[1].text, /No tests were found/);
   for (const c of [ok, failed]) assert.ok(c.some((x) => x.text === "Security fix not yet verified"));
 });
 

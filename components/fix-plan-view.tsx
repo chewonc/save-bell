@@ -67,7 +67,15 @@ export function PostCheckView({ fix }: { fix: Fix }) {
   );
 }
 
-export function NoPlanView({ plans, goVerify }: { plans: FixPlans | null; goVerify: () => void }) {
+export function NoPlanView({ plans, goVerify, notAffected = null }: { plans: FixPlans | null; goVerify: () => void; notAffected?: { text: string; why: string; basis: string | null }[] | null }) {
+  if (notAffected) return (
+    <div className="grid gap-2 text-[calc(13px*var(--ui))]">
+      <p className="text-[calc(15px*var(--ui))] font-semibold">Nothing to fix: not affected</p>
+      <p className="text-ink2">SaveBell found evidence in your code that a condition this vulnerability needs does not hold, so no change is proposed.</p>
+      {notAffected.length > 0 && <ul className="list-disc pl-5">{notAffected.map((c) => <li key={c.text}><span className="font-medium">{c.text}</span>: <span className="text-ink2">{c.why}{c.basis === "model" ? " (earlier AI analysis, not re-checked by rules)" : ""}</span></li>)}</ul>}
+      <p className="text-ink2">This is not a guarantee of safety; SaveBell checks again when your code or the advisory changes.</p>
+    </div>
+  );
   if (!plans) return <p className="text-[calc(13px*var(--ui))] text-ink2">No fix is proposed for this finding.</p>;
   return (
     <div className="grid gap-2 text-[calc(13px*var(--ui))]">

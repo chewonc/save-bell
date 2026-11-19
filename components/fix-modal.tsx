@@ -24,12 +24,13 @@ type Ctx = {
   evidence: Evidence[]; missing: string[];
   fix: Fix | null; can_act: boolean; blocker: string | null; runner_enabled: boolean; runner_note: string | null;
   plans: FixPlans | null; history: VerdictHistoryEntry[];
+  not_affected_because?: { text: string; why: string; basis: string | null }[];
   mode: RemediationMode; after_fix: string; agent_connected: boolean;
-  grant: { kind: "install" | "accept" | "allow_changes"; url: string | null } | null; repo_key: string;
+  grant: { kind: "install" | "accept" | "allow_changes" | "user_missing" | "user_unknown"; url: string | null; missing?: string[]; unknown?: boolean } | null; repo_key: string;
 };
 type Tab = "verify" | "agent" | "auto";
 export type Evidence = { text: string; state: string; computed?: boolean; basis?: string | null; refs: { file: string; line: number | null; quote: string; url: string | null }[] };
-const STATE_WORD: Record<string, string> = { Observed: "Observed in your code", Inferred: "Inferred", Unknown: "Not established", Absent: "Not present" };
+const STATE_WORD: Record<string, string> = { Observed: "Observed in your code", Inferred: "Inferred", Unknown: "Not established", Contradicted: "Contradicted by your code", Absent: "Not present" };
 // How each state was established. An earlier AI analysis is shown as a judgement, not as a checked fact.
 const BASIS_WORD: Record<string, string> = { version: "computed from the installed version", ast_observed: "read from your code by SaveBell's rules", ast_inferred: "derived from your code, scan incomplete", runtime_unknown: "decided at run time, not visible in code", no_call_found: "no call found (not proof of absence)", no_rule: "no rule to check this", model: "earlier AI analysis: the cited line exists, the judgement was not re-checked by rules", agent: "reported by your AI agent", conflict: "the rules and the earlier AI analysis disagree" };
 
@@ -95,7 +96,7 @@ export function FixModal({ assessmentId: initialId, onClose }: { assessmentId: s
   const tabs: { id: Tab; label: string }[] = [{ id: "verify", label: "Verify" }, { id: "auto", label: "Auto Fix" }, { id: "agent", label: "AI Agent" }];
   return (
     <dialog ref={ref} aria-labelledby={titleId} onClick={(e) => { if (e.target === ref.current) close(); }}
-      className="modal m-auto w-[min(640px,calc(100vw-32px))] max-h-[min(86vh,820px)] rounded-[12px] border hair bg-raised text-ink p-0 backdrop:bg-black/40">
+      className="modal m-auto w-[min(640px,calc(100vw-32px))] max-h-[min(86vh,820px)] overflow-hidden rounded-[12px] border hair bg-raised text-ink p-0 backdrop:bg-black/40">
       <div className="flex items-center justify-between gap-3 px-4 sm:px-5 pt-4 pb-3 border-b hair">
         <h2 id={titleId} className="text-[calc(16px*var(--ui))] font-semibold">Fix security issue</h2>
         <button type="button" className="text-ink2 hover:text-ink text-[calc(22px*var(--ui))] leading-none w-10 h-10 -mr-2 grid place-items-center" aria-label="Close" onClick={close}>×</button>
@@ -152,7 +153,7 @@ function VerifyTab({ c, onVerified, onFailed }: { c: Ctx; onVerified: (assessmen
   const head = { confirmed: "Confirmed", not_affected: "Not affected", unclear: "Unable to confirm", possible: "Possible issue" }[result];
   const text = {
     confirmed: "We found evidence that this vulnerability affects your code.",
-    not_affected: "The required vulnerability conditions were not found in your code.",
+    not_affected: "Evidence in your code shows that a condition this vulnerability needs does not hold.",
     unclear: "There isn't enough evidence to determine whether your code is affected.",
     possible: "We haven't confirmed whether this vulnerability affects your code.",
   }[result];
@@ -226,7 +227,7 @@ function AutoTab({ c, onChange, goVerify, recheck, onDone }: { c: Ctx; onChange:
   }, [waiting, recheck]);
   // Whether a fix can be proposed is decided by the plan (from the verification result), not by the verdict alone.
   const depPlan = c.plans?.dependency.available ? c.plans.dependency : null;
-  if (!depPlan && !c.fix) return <div className="grid gap-3"><NoPlanView plans={c.plans} goVerify={goVerify} /><HistoryView history={c.history ?? []} /></div>;
+  if (!depPlan && !c.fix) return <div className="grid gap-3">{c.grant && <GrantPermission c={c} recheck={recheck} />}<NoPlanView plans={c.plans} goVerify={goVerify} notAffected={c.verdict === "Not Affected" ? c.not_affected_because ?? [] : null} /><HistoryView history={c.history ?? []} /></div>;
   const pending = c.fix && !["failed", "validation_failed", "cancelled", "drafted"].includes(c.fix.status);
   return (
     <div className="grid gap-3">
@@ -255,8 +256,18 @@ function GrantPermission({ c, recheck }: { c: Ctx; recheck: () => void }) {
   const [err, setErr] = useState<string | null>(null);
   const [opened, setOpened] = useState(false);
   const g = c.grant!;
+  // Missing (GitHub confirmed it is absent) and unconfirmed (GitHub could not be asked) are told apart; both block.
+  const WHY: Record<string, string> = { "Actions: write": "starts the fix run in your own GitHub Actions", "Contents: write": "creates the branch with the change you approve", "Pull requests: write": "opens the draft pull request" };
+  const title = g.kind === "user_missing" ? "Your GitHub account can't change this repository."
+    : g.kind === "user_unknown" ? "SaveBell couldn't confirm your access to this repository."
+    : g.kind === "accept" && g.unknown ? "SaveBell couldn't confirm its GitHub App permissions for this repository."
+    : g.kind === "accept" ? "SaveBell's GitHub App is missing a permission for this repository."
+    : "SaveBell doesn't have permission to change this repository.";
   const how = g.kind === "install" ? "Install the SaveBell GitHub App on this repository. GitHub asks you to choose the repositories and confirm."
-    : g.kind === "accept" ? "GitHub needs you to approve the App's Contents and Pull requests write access for the repositories you selected. Nothing is changed in your code by approving."
+    : g.kind === "user_missing" ? "SaveBell runs and writes fixes only for people with write access to the repository. Ask a maintainer for write access, or ask a maintainer to run this fix."
+    : g.kind === "user_unknown" ? "Auto Fix stays off until GitHub confirms your write access. Sign in with GitHub again, then try again."
+    : g.kind === "accept" && g.unknown ? "Auto Fix stays off until the permissions are confirmed. Check that the SaveBell App is installed on this repository with Actions, Contents and Pull requests set to Read and write, then try again."
+    : g.kind === "accept" ? `Approve these on GitHub: ${(g.missing ?? []).map((m) => `${m} (${WHY[m] ?? "needed for Auto Fix"})`).join("; ")}. Nothing is changed in your code by approving.`
     : "Changes are turned off for this repository in SaveBell. Turning them on writes nothing to GitHub; each change still needs your approval.";
   const allow = async () => {
     setBusy(true); setErr(null);
@@ -265,15 +276,17 @@ function GrantPermission({ c, recheck }: { c: Ctx; recheck: () => void }) {
   };
   return (
     <div role="note" className="text-[calc(13px*var(--ui))] grid gap-2 border hair rounded-[8px] px-3 py-3">
-      <p className="tone-bad font-medium">SaveBell doesn&apos;t have permission to change this repository.</p>
+      <p className="tone-bad font-medium">{title}</p>
       <p className="text-ink2">{how}</p>
-      <div className="flex flex-wrap items-center gap-2">
+      {(g.kind === "user_missing" || g.kind === "user_unknown") ? (
+        g.kind === "user_unknown" && <div><button type="button" className="btn-ghost" onClick={recheck}>Try again</button></div>
+      ) : <div className="flex flex-wrap items-center gap-2">
         {g.kind === "allow_changes"
           ? <button type="button" className="btn" disabled={busy} onClick={allow}>{busy ? "Granting…" : "Grant Permission"}</button>
           : <a className="btn no-underline" href={g.url ?? "#"} target="_blank" rel="noreferrer" onClick={() => setOpened(true)}>Grant Permission <span aria-hidden>↗</span></a>}
-        {g.kind !== "allow_changes" && opened && <button type="button" className="btn-ghost" onClick={recheck}>I&apos;ve approved it</button>}
-      </div>
-      {g.kind !== "allow_changes" && <p className="text-[calc(12px*var(--ui))] text-ink2">{opened ? "Waiting for GitHub. This updates by itself when you come back to this tab." : "Opens GitHub in a new tab. Come back here afterwards; your prepared fix stays as it is."}</p>}
+        {g.kind !== "allow_changes" && (opened || g.unknown) && <button type="button" className="btn-ghost" onClick={recheck}>{g.unknown ? "Try again" : "I've approved it"}</button>}
+      </div>}
+      {(g.kind === "install" || g.kind === "accept") && <p className="text-[calc(12px*var(--ui))] text-ink2">{opened ? "Waiting for GitHub. This updates by itself when you come back to this tab." : "Opens GitHub in a new tab. Come back here afterwards; your prepared fix stays as it is."}</p>}
       {err && <p role="alert" className="tone-bad">{err}</p>}
     </div>
   );

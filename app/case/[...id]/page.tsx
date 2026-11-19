@@ -18,17 +18,19 @@ import { ThreatTimeline } from "@/components/threat-timeline";
 import { MarkRead } from "@/components/mark-read";
 import { Band, Chip, Timeline } from "@/components/ui";
 import { env, hasGitHubApp } from "@/lib/env";
-import { installationPermissions } from "@/lib/github-app";
 import { getDict, getLocale, tr } from "@/lib/i18n";
 import { isVerified, location, matchedTech, plainTitle, statusOf, localized, tidy, whereLine } from "@/lib/labels";
 import { permalink, provenanceOf } from "@/lib/remediation";
 import { readFile } from "@/lib/repo";
 import { deriveSeverity } from "@/lib/severity";
-import { canSee, isSystemRepo, requireUser } from "@/lib/session";
+import { canSee, githubUserToken, isSystemRepo, requireUser } from "@/lib/session";
 import { store } from "@/lib/store";
 import type { Assessment } from "@/lib/schema";
 import { modelName } from "@/lib/labels";
 import { relevance } from "@/lib/verdict";
+import { autoFixPermission, permWrite } from "@/lib/fix-permissions";
+import { newerRecheck } from "@/lib/verdict-history";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -84,7 +86,9 @@ export default async function Case({ params }: { params: Promise<{ id: string[] 
     return { file, html };
   }));
 
-  const writeOk = env.FIX_ENABLED && ur?.installation_id && hasGitHubApp() ? await installationPermissions(ur.installation_id).then((p) => p.contents === "write" && p.pull_requests === "write").catch(() => false) : null;
+  // Same permission decision as the Fix window and the server routes (lib/fix-permissions.ts).
+  const perm = env.FIX_ENABLED && ur?.installation_id && hasGitHubApp() ? await autoFixPermission({ inst: ur.installation_id, repoFull: repoOnly, mode: modeOf(user.settings), userToken: await githubUserToken() }) : null;
+  const writeOk = permWrite(perm);
   const ghUrl = verified && loc ? permalink(repoOnly, a.sha, loc.file, loc.from, loc.to) : null;
   const severeUnverified = !verified && a.verdict !== "Not Affected" && (sev.level === "critical" || sev.level === "high");
   // Next step: derived from the assessment only (no model call). Unconfirmed findings point at the first required
@@ -97,7 +101,9 @@ export default async function Case({ params }: { params: Promise<{ id: string[] 
     : openCond ? d.ns_possible.replace("{x}", `${openCond.t.replace(/\.$/, "")}${openRef ? ` (${openRef.file.split("/").pop()}:${openRef.line})` : ""}.`)
     : missingT[0] ? d.ns_possible.replace("{x}", missingT[0])
     : d.ns_fallback;
-  const act = findingAction(a, fixes, { fixEnabled: env.FIX_ENABLED, allowPr: !!ur?.allow_pr, isDemo: demoRepo, hasInstallation: !!ur?.installation_id, writePermission: writeOk, mode: modeOf(user.settings) }, caseHref(a.id));
+  const act = findingAction(a, fixes, { fixEnabled: env.FIX_ENABLED, allowPr: !!ur?.allow_pr, isDemo: demoRepo, hasInstallation: !!ur?.installation_id, writePermission: writeOk, permission: perm, mode: modeOf(user.settings) }, caseHref(a.id));
+  // This record may have been re-checked since; the newer record is linked (the older one stays readable).
+  const newer = await newerRecheck(a);
   const cachedSim = a.verdict === "Not Affected" ? null : await cachedSimulation(a, fixes.find((x) => x.files.length > 0) ?? null, locale).catch(() => null);
 
   return (
@@ -105,6 +111,7 @@ export default async function Case({ params }: { params: Promise<{ id: string[] 
       <MarkRead assessmentId={a.id} />
       <div className="grid gap-3">
         <BackToThreats label={d.nav_threats} />
+        {newer && <p role="note" className="text-[calc(13px*var(--ui))] border hair rounded-[8px] px-3 py-2">A newer check of this finding exists ({newer.verdict === "Unclear" ? "Possible issue" : newer.verdict}, {newer.at.slice(0, 16).replace("T", " ")} UTC). <Link href={caseHref(newer.assessment_id)}>Open the newer check</Link>. This page shows the earlier record.</p>}
         <div className="flex flex-wrap items-center gap-2"><StatusPill s={status} /><CredibilityChip c={f?.credibility} l={{ none: d.report_not_checked, prefix: d.report_prefix }} /><SparkBadge a={a} label={d.analysed_by_spark} /></div>
         <h1 className="text-[calc(26px*var(--ui))] sm:text-[calc(30px*var(--ui))] font-semibold tracking-[-0.02em] leading-tight">{T.title}</h1>
         {loc && a.verdict !== "Not Affected" && <div className="text-[calc(13px*var(--ui))] text-ink2"><span>{verified ? d.affected_at : d.potentially_affected}: </span>{ghUrl ? <a href={ghUrl} target="_blank" rel="noreferrer" className="mono [overflow-wrap:anywhere]" title={d.open_in_github}>{`${loc.file}:${loc.from}${loc.to !== loc.from ? `–${loc.to}` : ""}`} ↗</a> : <span className="mono [overflow-wrap:anywhere]">{`${loc.file}:${loc.from}${loc.to !== loc.from ? `–${loc.to}` : ""}`}</span>}</div>}

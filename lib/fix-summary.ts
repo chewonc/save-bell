@@ -6,7 +6,7 @@ import type { Fix } from "./schema";
 export type Check = { tone: "ok" | "warn" | "bad"; text: string };
 
 /** Short facts shown under a ready or completed patch. */
-export function fixChecks(fix: Pick<Fix, "files" | "runner" | "agent" | "syntax_check">): Check[] {
+export function fixChecks(fix: Pick<Fix, "files" | "runner" | "agent" | "syntax_check" | "kind">): Check[] {
   const out: Check[] = [];
   const n = fix.files.length;
   out.push({ tone: "ok", text: `${n} file${n === 1 ? "" : "s"} changed` });
@@ -16,7 +16,7 @@ export function fixChecks(fix: Pick<Fix, "files" | "runner" | "agent" | "syntax_
     if (t.exit_code === 0) out.push({ tone: "ok", text: s && s.total > 0 ? `${s.passed} test${s.passed === 1 ? "" : "s"} passed` : "Tests passed" });
     else out.push({ tone: "bad", text: s ? `${s.failed} test${s.failed === 1 ? "" : "s"} failed` : "Tests failed" });
   } else if (fix.runner?.install && fix.runner.install.executed && fix.runner.install.exit_code !== 0) out.push({ tone: "bad", text: "Dependencies could not be installed" });
-  else out.push({ tone: "warn", text: fix.agent === "muse-code" || fix.agent === "runner" ? "No tests were found to run" : "Not tested yet" });
+  else out.push({ tone: "warn", text: fix.kind && !fix.runner?.finished_at ? "Not run yet: tests run in your GitHub Actions after you approve" : fix.agent === "muse-code" || fix.agent === "runner" ? "No tests were found to run" : "Not tested yet" });
   if (fix.syntax_check?.some((c) => !c.ok)) out.push({ tone: "bad", text: "A changed file has a syntax error" });
   out.push({ tone: "warn", text: "Security fix not yet verified" });
   return out;

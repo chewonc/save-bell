@@ -4,10 +4,10 @@
 import { withAgentFor, fixesFor } from "@/lib/authz";
 import { classify, type BulkItem } from "@/lib/bulk";
 import { env, hasGitHubApp } from "@/lib/env";
-import { installationPermissions } from "@/lib/github-app";
+import { permissionResolver, permWrite } from "@/lib/fix-permissions";
 import { location, plainTitle } from "@/lib/labels";
 import { destinationOf, modeOf } from "@/lib/remediation-mode";
-import { canSee, currentUser, isSystemRepo } from "@/lib/session";
+import { canSee, currentUser, githubUserToken, isSystemRepo } from "@/lib/session";
 import { store } from "@/lib/store";
 import { hostedUsedBy } from "@/lib/usage";
 
@@ -19,7 +19,7 @@ export async function POST(req: Request) {
   if (!ids.length) return Response.json({ error: "Select at least one issue." }, { status: 400 });
   const mode = destinationOf(body.mode, modeOf(user.settings));
   const resolved = new Set(await store.resolvedSet(user.id));
-  const perms = new Map<number, boolean | null>();
+  const resolvePerm = permissionResolver(env.FIX_ENABLED && hasGitHubApp() ? await githubUserToken() : null);
   const items: BulkItem[] = [];
   for (const id of ids) {
     const raw = await store.getAssessment(id);
@@ -27,8 +27,9 @@ export async function POST(req: Request) {
     const [a] = await withAgentFor(user.id, [raw]);
     const [ur, demo, w, f, fixes] = await Promise.all([store.getUserRepo(user.id, a.repo), isSystemRepo(a.repo), store.getRepo(a.repo), store.getFinding(a.finding_id), fixesFor(user.id, a.id)]);
     const inst = w?.installation_id ?? ur?.installation_id ?? null;
-    if (inst && !perms.has(inst)) perms.set(inst, env.FIX_ENABLED && hasGitHubApp() ? await installationPermissions(inst).then((p) => p.contents === "write" && p.pull_requests === "write").catch(() => false) : null);
-    const c = classify(a, fixes, { fixEnabled: env.FIX_ENABLED, allowPr: !!ur?.allow_pr, isDemo: demo, hasInstallation: !!inst, writePermission: inst ? perms.get(inst) ?? null : null, mode }, resolved.has(a.id));
+    // Same permission decision as the Fix window and the server routes (lib/fix-permissions.ts).
+    const perm = inst && env.FIX_ENABLED && hasGitHubApp() ? await resolvePerm(inst, a.repo.split("/").slice(0, 2).join("/"), mode) : null;
+    const c = classify(a, fixes, { fixEnabled: env.FIX_ENABLED, allowPr: !!ur?.allow_pr, isDemo: demo, hasInstallation: !!inst, writePermission: permWrite(perm), permission: perm, mode }, resolved.has(a.id));
     items.push({ assessment_id: a.id, repo: a.repo, title: plainTitle(a, f, location(a), w?.tech_tags, w?.packages.map((p) => p.name)), ...c });
   }
   const verifications = items.filter((i) => i.cls === "needs_verification").length;

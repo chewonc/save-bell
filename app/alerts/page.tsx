@@ -16,11 +16,11 @@ import { actionLabels } from "@/lib/action-labels";
 import type { Fix } from "@/lib/schema";
 import { redirect } from "next/navigation";
 import { env, hasGitHubApp } from "@/lib/env";
-import { installationPermissions } from "@/lib/github-app";
+import { permissionResolver, permWrite, type AutoFixPermission } from "@/lib/fix-permissions";
 import { getDict, getLocale, tr } from "@/lib/i18n";
 import { caseHref, discoveredAt, location, plainTitle, repoStatus, statusOf, localized, whereLine } from "@/lib/labels";
 import { deriveSeverity } from "@/lib/severity";
-import { currentUser, visibleRepoKeys } from "@/lib/session";
+import { currentUser, githubUserToken, visibleRepoKeys } from "@/lib/session";
 import { ALERT_HISTORY, store } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
@@ -51,11 +51,11 @@ export default async function Watch({ searchParams }: { searchParams: Promise<Re
   const resolved = new Set(resolvedSet);
   const fixesBy = new Map<string, Fix[]>();
   await Promise.all([...latest.values()].filter((a) => a.verdict !== "Not Affected").map(async (a) => { fixesBy.set(a.id, await fixesFor(user.id, a.id)); }));
-  // Write permission is only looked up when web Fix is switched on (one cached-per-request call per installation).
-  const perms = new Map<number, boolean>();
-  if (env.FIX_ENABLED && hasGitHubApp()) for (const id of new Set(mine.map((m) => m.installation_id).filter((x): x is number => !!x))) {
-    perms.set(id, await installationPermissions(id).then((p) => p.contents === "write" && p.pull_requests === "write").catch(() => false));
-  }
+  // The Fix button follows the same permission decision as the Fix window and the server (App permissions for the
+  // saved destination + the user's own write access), looked up once per repository when web Fix is switched on.
+  const resolvePerm = permissionResolver(env.FIX_ENABLED && hasGitHubApp() ? await githubUserToken() : null);
+  const permBy = new Map<string, AutoFixPermission>();
+  if (env.FIX_ENABLED && hasGitHubApp()) await Promise.all(mine.filter((m) => m.installation_id && [...latest.values()].some((a) => a.repo === m.repo_key)).map(async (m) => { permBy.set(m.repo_key, await resolvePerm(m.installation_id, m.repo_key.split("/").slice(0, 2).join("/"), modeOf(user?.settings))); }));
 
   const cards: CardData[] = [...latest.values()].sort((x, y) => discoveredAt(y).localeCompare(discoveredAt(x))).map((a) => {
     const f = fmap.get(a.finding_id) ?? null;
@@ -68,7 +68,7 @@ export default async function Watch({ searchParams }: { searchParams: Promise<Re
     // An open (or merged) pull request shows as "fix ready to review"; it is never marked resolved by SaveBell itself.
     const status = localized(statusOf(a, sev, { resolved: resolved.has(a.id), prOpen: !!lf && ["pr_created", "blocked_by_protection", "merging"].includes(lf.status), merged: lf?.status === "merged" }), d);
     const href = caseHref(a.id);
-    const act = findingAction(a, fixes, { fixEnabled: env.FIX_ENABLED, allowPr: !!ur?.allow_pr, isDemo: !ur, hasInstallation: !!ur?.installation_id, writePermission: ur?.installation_id ? perms.get(ur.installation_id) ?? null : null, mode: modeOf(user?.settings) }, href);
+    const act = findingAction(a, fixes, { fixEnabled: env.FIX_ENABLED, allowPr: !!ur?.allow_pr, isDemo: !ur, hasInstallation: !!ur?.installation_id, writePermission: permWrite(permBy.get(a.repo)), permission: permBy.get(a.repo) ?? null, mode: modeOf(user?.settings) }, href);
     return { a, f, sev, status, title: plainTitle(a, f, loc, r?.tech_tags, r?.packages.map((p) => p.name)), where: whereLine(a, loc), act, caseHref: href };
   });
   if (locale !== "en") {

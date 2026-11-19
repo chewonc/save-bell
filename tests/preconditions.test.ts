@@ -372,3 +372,16 @@ test("a rules-vs-AI conflict keeps both sides: the AI citations in the conflict 
   assert.ok(h.conditions.some((c) => c.id === "analysis_conflict" && c.basis === "conflict"));
   assert.ok(h.conditions.some((c) => c.id === "jwt_key_retrieval_function" && c.basis === "ast_observed"));
 });
+
+test("an older case link finds the newest re-check of the same finding, and never a record older than itself", async () => {
+  const { newerRecheck } = await import("../lib/verdict-history");
+  const old = assessment({ id: "f-newer:old", finding_id: "f-newer", repo: "o/newer", timestamps: { published_at: null, discovered_at: "2026-11-18T00:00:00Z", processed_at: "2026-11-19T01:00:00Z", notified_at: null } });
+  assert.equal(await newerRecheck(old), null);
+  await store.addVerdictHistory("o/newer", "f-newer", historyEntry(old, "initial", "analysis"));
+  const re = { ...historyEntry(assessment({ id: "f-newer:re", verdict: "Not Affected" }), "recheck", "rule_change"), at: "2026-11-19T02:00:00Z" };
+  await store.addVerdictHistory("o/newer", "f-newer", re);
+  assert.equal((await newerRecheck(old))?.assessment_id, "f-newer:re");
+  const later = { ...old, id: "f-newer:later", timestamps: { ...old.timestamps, processed_at: "2026-11-19T03:00:00Z" } };
+  assert.equal(await newerRecheck(later), null, "a re-check older than the record shown is not offered");
+  assert.equal(await newerRecheck({ ...old, id: "f-newer:re" }), null, "the newest record itself has nothing newer");
+});

@@ -20,7 +20,7 @@ export type FindingAction = {
   note: string | null;
 };
 // mode: the user's saved remediation preference. "preview" needs no write access, so missing write permission is not a blocker there.
-export type ActionContext = { fixEnabled: boolean; allowPr: boolean; isDemo: boolean; hasInstallation: boolean; writePermission: boolean | null; mode?: RemediationMode; dependencyPlan?: boolean };
+export type ActionContext = { fixEnabled: boolean; allowPr: boolean; isDemo: boolean; hasInstallation: boolean; writePermission: boolean | null; mode?: RemediationMode; dependencyPlan?: boolean; permission?: { ok: boolean; blocker: string | null } | null };
 
 const ACTIVE: Partial<Record<Fix["status"], NonNullable<FindingAction["state"]>["key"]>> = { drafting: "preparing", approved: "creating_pr", queued: "preparing", running: "in_progress", merging: "checks" };
 
@@ -41,6 +41,8 @@ export function automationBlocker(a: Assessment, ctx: ActionContext): string | n
   if (!ctx.dependencyPlan && !loc) return "No exact line was cited, so there is nothing safe to change automatically.";
   if (!ctx.dependencyPlan && loc && UNFIXABLE.test(loc.file)) return `${loc.file.split("/").pop()} can't be changed automatically (lockfiles, secrets and CI workflows are excluded).`;
   if (!ctx.hasInstallation) return "Repository permission: install the SaveBell GitHub App on this repository.";
+  // The shared Auto Fix permission decision (lib/fix-permissions.ts), in every mode: a preview still starts a run.
+  if (ctx.permission && !ctx.permission.ok) return ctx.permission.blocker;
   if (!write) return null;
   if (ctx.writePermission === false) return "Repository permission: the GitHub App needs write access to contents and pull requests.";
   if (ctx.writePermission == null) return "Repository permission: write access for this repository could not be confirmed.";
