@@ -164,7 +164,7 @@ test("UI requests: scale factor, solid bell, bold titles, centered checkbox, Ver
   assert.match(modal, /hidden=\{tab !== "verify"\}/, "tabs stay mounted so Verify results persist");
   assert.match(modal, /Grant Permission/);
   const rem = readFileSync("components/remediation.tsx", "utf8");
-  assert.doesNotMatch(rem, /Check this fix/); assert.match(rem, /Approve &amp; Fix/);
+  assert.doesNotMatch(rem, /Check this fix/); assert.match(rem, /Approve (&amp;|&) Fix/);
   assert.match(rem, /fix\.patch_version === v/, "auto-approve only the exact reviewed patch");
 });
 

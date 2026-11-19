@@ -3,6 +3,9 @@ import type { ConditionResult, Tier, Verdict } from "./schema";
 
 export function decide(conds: ConditionResult[], tier: Tier): { verdict: Verdict; reason: string; missing: string[] } {
   const missing = conds.filter((c) => c.state === "Unknown").map((c) => c.text);
+  // Rules and an earlier AI analysis reached opposite verdicts: neither decides; the finding stays unresolved.
+  const conflict = conds.find((c) => c.basis === "conflict");
+  if (conflict) return { verdict: "Unclear", reason: `Analyses disagree (${conflict.id}): held for review`, missing };
   const contradicted = conds.filter((c) => c.state === "Contradicted");
   if (contradicted.length) return { verdict: "Not Affected", reason: `Contradicted: ${contradicted.map((c) => c.id).join(", ")}`, missing };
   const required = conds.filter((c) => c.role === "required");

@@ -4,7 +4,11 @@
 //   Verify    read-only: the evidence SaveBell has and what is still missing
 //   AI Agent  copyable instructions for the user's own coding agent
 //   Auto Fix  the remediation workflow (components/remediation.tsx) with the saved destination preference
-// Unconfirmed findings never start Auto Fix: the tab explains that verification comes first.
+// Auto Fix offers only a plan derived from the verification result (lib/fix-plan.ts). A Possible issue gets a plan only
+// after the deterministic re-check, and then only as a preventive change; both approvals are always required.
+import type { FixPlans } from "@/lib/fix-plan";
+import type { VerdictHistoryEntry } from "@/lib/schema";
+import { HistoryView, NoPlanView } from "./fix-plan-view";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
@@ -19,12 +23,15 @@ type Ctx = {
   code_url: string | null;
   evidence: Evidence[]; missing: string[];
   fix: Fix | null; can_act: boolean; blocker: string | null; runner_enabled: boolean; runner_note: string | null;
+  plans: FixPlans | null; history: VerdictHistoryEntry[];
   mode: RemediationMode; after_fix: string; agent_connected: boolean;
   grant: { kind: "install" | "accept" | "allow_changes"; url: string | null } | null; repo_key: string;
 };
 type Tab = "verify" | "agent" | "auto";
-export type Evidence = { text: string; state: string; computed?: boolean; refs: { file: string; line: number | null; quote: string; url: string | null }[] };
+export type Evidence = { text: string; state: string; computed?: boolean; basis?: string | null; refs: { file: string; line: number | null; quote: string; url: string | null }[] };
 const STATE_WORD: Record<string, string> = { Observed: "Observed in your code", Inferred: "Inferred", Unknown: "Not established", Absent: "Not present" };
+// How each state was established. An earlier AI analysis is shown as a judgement, not as a checked fact.
+const BASIS_WORD: Record<string, string> = { version: "computed from the installed version", ast_observed: "read from your code by SaveBell's rules", ast_inferred: "derived from your code, scan incomplete", runtime_unknown: "decided at run time, not visible in code", no_call_found: "no call found (not proof of absence)", no_rule: "no rule to check this", model: "earlier AI analysis: the cited line exists, the judgement was not re-checked by rules", agent: "reported by your AI agent", conflict: "the rules and the earlier AI analysis disagree" };
 
 // autoOpen: on the finding page, links from notifications and older bookmarks (?act=1, ?verify=1, #fix) open the modal.
 export function FixButton({ assessmentId, label = "Fix", className = "btn", autoOpen = false }: { assessmentId: string; label?: string; className?: string; autoOpen?: boolean }) {
@@ -192,7 +199,7 @@ export function EvidenceList({ items }: { items: Evidence[] }) {
       <summary>Evidence ({items.length})</summary>
       <ul className="grid gap-3 mt-3">{items.map((e, i) => (
         <li key={i} className="grid gap-1">
-          <div><span className={e.state === "Observed" ? "tone-ok" : e.state === "Unknown" ? "tone-warn" : "text-ink2"}>{STATE_WORD[e.state] ?? e.state}</span>{e.computed ? " (computed)" : ""} · {e.text}</div>
+          <div><span className={e.state === "Observed" ? "tone-ok" : e.state === "Unknown" ? "tone-warn" : "text-ink2"}>{STATE_WORD[e.state] ?? e.state}</span>{e.computed && !e.basis ? " (computed)" : ""}{e.basis ? <span className={e.basis === "model" || e.basis === "conflict" ? "tone-warn" : "text-ink2"}> ({BASIS_WORD[e.basis] ?? e.basis})</span> : null} · {e.text}</div>
           {e.refs.map((r, j) => (
             <div key={j} className="grid gap-0.5 pl-3 border-l hair">
               <span className="text-[calc(12px*var(--ui))] text-ink2">{r.url ? <a href={r.url} target="_blank" rel="noreferrer" title={r.file} className="mono">{r.file.split("/").pop()}{r.line ? `:${r.line}` : ""} ↗</a> : <span className="mono" title={r.file}>{r.file.split("/").pop()}{r.line ? `:${r.line}` : ""}</span>}</span>
@@ -217,13 +224,9 @@ function AutoTab({ c, onChange, goVerify, recheck, onDone }: { c: Ctx; onChange:
     const t = setInterval(recheck, 8000);
     return () => { window.removeEventListener("focus", onFocus); clearInterval(t); };
   }, [waiting, recheck]);
-  if (!c.verified) return (
-    <div className="grid gap-2 text-[calc(13px*var(--ui))]">
-      <p className="text-[calc(15px*var(--ui))] font-semibold">Verification needed first</p>
-      <p className="text-ink2">This is a possible issue, not a confirmed vulnerability. Fixes are prepared only for confirmed findings.</p>
-      <button type="button" className="btn w-fit" onClick={goVerify}>Verify</button>
-    </div>
-  );
+  // Whether a fix can be proposed is decided by the plan (from the verification result), not by the verdict alone.
+  const depPlan = c.plans?.dependency.available ? c.plans.dependency : null;
+  if (!depPlan && !c.fix) return <div className="grid gap-3"><NoPlanView plans={c.plans} goVerify={goVerify} /><HistoryView history={c.history ?? []} /></div>;
   const pending = c.fix && !["failed", "validation_failed", "cancelled", "drafted"].includes(c.fix.status);
   return (
     <div className="grid gap-3">
@@ -235,7 +238,9 @@ function AutoTab({ c, onChange, goVerify, recheck, onDone }: { c: Ctx; onChange:
           {c.blocker.startsWith("Repository permission") && <p className="text-ink2">Manage access on <Link href="/settings#repositories">Settings → Repositories</Link>. The AI Agent tab still works.</p>}
         </div>
       )}
-      {(c.can_act || pending || c.grant) && <Remediation assessmentId={c.assessment_id} initial={c.fix} canAct={c.can_act} runnerEnabled={c.runner_enabled} defaultBranch={c.default_branch} repo={c.repo} mode={c.mode} onChange={onChange} onDone={onDone} permissionMissing={!!c.grant} />}
+      {(c.can_act || pending || c.grant || c.fix) && <Remediation assessmentId={c.assessment_id} initial={c.fix} canAct={c.can_act} runnerEnabled={c.runner_enabled} defaultBranch={c.default_branch} repo={c.repo} mode={c.mode} onChange={onChange} onDone={onDone} permissionMissing={!!c.grant} plan={depPlan} />}
+      {depPlan && c.plans && !c.plans.code.available && <p className="text-[calc(12px*var(--ui))] text-ink2">Code change without AI: {c.plans.code.reason}</p>}
+      <HistoryView history={c.history ?? []} />
     </div>
   );
 }

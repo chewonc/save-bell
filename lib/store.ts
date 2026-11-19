@@ -1,7 +1,7 @@
 // Storage: Upstash Redis when configured, else an in-process Map persisted to .data/store.json (dev only).
 import { Redis } from "@upstash/redis";
 import { env, hasRedis } from "./env";
-import type { Assessment, Finding, Fix, Installation, Item, LogEntry, Notification, PushSubscription, User, UserRepo, WatchedRepo } from "./schema";
+import type { Assessment, Finding, Fix, Installation, Item, LogEntry, Notification, PushSubscription, User, UserRepo, VerdictHistoryEntry, WatchedRepo } from "./schema";
 
 type KV = {
   get<T>(k: string): Promise<T | null>;
@@ -115,6 +115,7 @@ const K = {
   notifDedup: (uid: string, fid: string, k: string) => `notifd:${uid}:${fid}:${k}`,
   push: (uid: string) => `push:${uid}`,
   fix: (id: string) => `fix:${id}`,
+  vhist: (repoKey: string, findingId: string) => `vhist:${repoKey}:${findingId}`, // append-only verdict history
   fixesFor: (aid: string) => `assessment:${aid}:fixes`,
   ghtok: (inst: number) => `ghtok:${inst}`,
 };
@@ -312,6 +313,10 @@ export const store = {
   addPush: (uid: string, s: PushSubscription) => kv.sadd(K.push(uid), JSON.stringify(s)),
   removePush: (uid: string, endpoint: string) => kv.smembers(K.push(uid)).then(async (all) => { for (const j of all) if ((JSON.parse(j) as PushSubscription).endpoint === endpoint) await kv.srem(K.push(uid), j); }),
   async listPush(uid: string): Promise<PushSubscription[]> { return (await kv.smembers(K.push(uid))).map((j) => JSON.parse(j) as PushSubscription); },
+
+  // ---- verdict history (append-only; newest first) ------------------------------
+  async addVerdictHistory(repoKey: string, findingId: string, e: VerdictHistoryEntry) { await kv.lpush(K.vhist(repoKey, findingId), e); },
+  verdictHistory: (repoKey: string, findingId: string, n = 50) => kv.lrange<VerdictHistoryEntry>(K.vhist(repoKey, findingId), 0, n - 1),
 
   // ---- fixes ------------------------------------------------------------------
   async putFix(f: Fix, isNew = false) { await kv.set(K.fix(f.id), f); if (isNew) await kv.lpush(K.fixesFor(f.assessment_id), f.id); },

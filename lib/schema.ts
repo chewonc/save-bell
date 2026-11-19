@@ -116,6 +116,11 @@ export const ConditionResult = ConditionDef.extend({
   evidence: z.array(Evidence),
   reasoning: z.string(),
   computed: z.boolean().default(false), // true when decided by code (e.g. version in range)
+  // How the state was established (lib/preconditions). "ast_observed": read directly from the code's syntax tree;
+  // "ast_inferred": derived from the syntax tree with a stated assumption; "runtime_unknown": decided only at run time
+  // (environment values, deployment), so it stays Unknown; "no_call_found": the API was not found by the scan, which is
+  // never treated as proof of absence; "no_rule": SaveBell has no deterministic check for this precondition.
+  basis: z.enum(["version", "ast_observed", "ast_inferred", "runtime_unknown", "no_call_found", "no_rule", "model", "agent", "conflict"]).optional(),
 });
 export type ConditionResult = z.infer<typeof ConditionResult>;
 
@@ -157,6 +162,10 @@ export const Assessment = z.object({
   severity: Severity.optional(), // computed in lib/severity.ts for new assessments; derived at render time for older ones
   investigation: z.object({ added: z.array(z.string()), steps: z.number(), tools: z.array(z.string()), rationale: z.string(), tokens: z.number(), ms: z.number(), model: z.string() }).nullable().optional(), // agentic file discovery (lib/investigate.ts)
   hosted: z.enum(["model", "deterministic", "capped"]).optional(), // how the hosted analysis ran (cost control); absent = model (older records)
+  // Rules version that produced this record ("rules-1": version check only; "rules-2": also deterministic precondition
+  // checks). A re-check stores a NEW record; the earlier one is kept (see VerdictHistoryEntry).
+  analyzer: z.string().optional(),
+  origin: z.object({ kind: z.enum(["pipeline", "recheck"]), previous_id: z.string().nullable() }).optional(),
   // Result reported by the user's own AI agent over MCP. Every cited line was re-read at `sha` and matched before it was stored;
   // the server verdict above is never overwritten.
   agent: z.object({
@@ -335,6 +344,24 @@ export const Fix = z.object({
   // Version of the validated patch the user must approve (hash of paths + contents). Approval names this version;
   // a different patch requires a new review. null until the runner's patch was validated.
   patch_version: z.string().nullable().default(null),
+  // ---- plan-based fixes (lib/fix-plan.ts, lib/exec-grant.ts) ----
+  kind: z.enum(["dependency", "code"]).optional(),
+  // Snapshot of the plan the user approved (library, versions, files, reasons, risks); shown again at diff approval.
+  plan: z.record(z.string(), z.unknown()).nullable().optional(),
+  // First approval: execution of exactly this plan, at this commit, with this executor. Single use, server-side only.
+  exec_grant: z.object({
+    id: z.string(), user_id: z.string(), repo: z.string(), fix_id: z.string(), base_sha: z.string(), plan_hash: z.string(),
+    files: z.array(z.string()), deps: z.array(z.object({ name: z.string(), from: z.string(), to: z.string(), new_spec: z.string() })),
+    agent: z.enum(["rules"]), model: z.string().nullable(), budget_usd: z.number().nullable(), major_confirmed: z.boolean(),
+    issued_at: z.string(), expires_at: z.string(), consumed_at: z.string().nullable(),
+  }).nullable().optional(),
+  // Re-verification after the change, separate from the original verdict (which is never raised by a fix).
+  post_check: z.object({
+    at: z.string(), installed_after: z.string().nullable(), advisory: z.enum(["no_longer_applies", "still_applies", "unknown"]),
+    known_vulns_after: z.object({ status: z.enum(["none", "found", "unknown"]), ids: z.array(z.string()), note: z.string() }),
+    preconditions: z.array(z.object({ id: z.string(), state: z.string(), note: z.string() })),
+    tests: z.string(), outcome: z.enum(["validated", "unverified", "failed"]), reasons: z.array(z.string()),
+  }).nullable().optional(),
 });
 export type Fix = z.infer<typeof Fix>;
 
@@ -364,3 +391,23 @@ export const LogEntry = z.object({
   ms: z.number().optional(),
 });
 export type LogEntry = z.infer<typeof LogEntry>;
+
+/**
+ * One step in the verdict history of a finding in one repository. Entries are appended, never rewritten, so the first
+ * verdict, verdicts after added checks, and the state after a fix stay separately visible. `cause` keeps "the rules got
+ * better" (rule_change) apart from "the code changed" (code_change) and "a fix was applied" (fix).
+ */
+export const VerdictHistoryEntry = z.object({
+  at: z.string(),
+  stage: z.enum(["initial", "recheck", "post_fix"]),
+  cause: z.enum(["analysis", "rule_change", "code_change", "fix"]),
+  assessment_id: z.string(),
+  sha: z.string(),
+  analyzer: z.string(),
+  verdict: Verdict,
+  reason: z.string(),
+  conditions: z.array(z.object({ id: z.string(), state: EvidenceState, basis: z.string().nullable() })),
+  fix_id: z.string().nullable().default(null),
+  fix_outcome: z.enum(["validated", "unverified", "failed"]).nullable().default(null),
+});
+export type VerdictHistoryEntry = z.infer<typeof VerdictHistoryEntry>;

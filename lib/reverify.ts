@@ -3,6 +3,8 @@
 // Reuses the pipeline's analyzer (lib/analyze.ts assess); the verdict comes from the fixed rule in lib/verdict.ts.
 // The result is stored as a NEW assessment record; the earlier one is kept.
 import { assess } from "./analyze";
+import { ANALYZER_RULES_2 } from "./preconditions";
+import { historyEntry } from "./verdict-history";
 import type { Assessment } from "./schema";
 import { store } from "./store";
 
@@ -18,11 +20,18 @@ export async function reverify(prev: Assessment, actor: string): Promise<{ asses
   const fx = cred === "disputed" || cred === "likely_false" || (cred === "unverified" && f.tier === "corroborated") ? { ...f, tier: "signal" as const } : f;
   const t0 = Date.now();
   let a;
-  try { a = await assess(fx, f.claim, repo, { items }); }
+  // An explicit re-check always runs the deterministic precondition checks (rules-2). It is user-requested and per
+  // finding; the bulk pipeline keeps its analyzer until the owner approves the change (lib/analyze.ts pipelineAnalyzer).
+  try { a = await assess(fx, f.claim, repo, { items, analyzer: ANALYZER_RULES_2, origin: { kind: "recheck", previous_id: prev.id }, previous: prev }); }
   catch (e) { throw new ReverifyError(`The check could not finish: ${String((e as Error).message ?? e).slice(0, 160)}`, 502); }
   const id = (await store.getAssessment(a.id)) ? `${a.id}:v${Date.now().toString(36)}` : a.id;
   const saved = { ...a, id, timestamps: { ...a.timestamps, discovered_at: prev.timestamps.discovered_at, notified_at: prev.timestamps.notified_at } };
   await store.putAssessment(saved);
+  // Append-only history: record the first verdict once, then this re-check with what changed (rules or code).
+  const hist = await store.verdictHistory(prev.repo, prev.finding_id, 1);
+  if (!hist.length) await store.addVerdictHistory(prev.repo, prev.finding_id, historyEntry(prev, "initial", "analysis"));
+  const cause = saved.sha !== prev.sha ? "code_change" : (saved.analyzer ?? "") !== (prev.analyzer ?? "rules-1") ? "rule_change" : "analysis";
+  await store.addVerdictHistory(prev.repo, prev.finding_id, historyEntry(saved, "recheck", cause));
   await store.log({ kind: "process", source: actor, detail: `verification of ${prev.repo}: ${saved.verdict} (${saved.conditions.filter((c) => c.state === "Observed").length} observed condition(s))`, ref: id, ms: Date.now() - t0 });
   return { assessment: saved, ms: Date.now() - t0 };
 }

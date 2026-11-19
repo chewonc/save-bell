@@ -12,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { dependenciesChanged, lockfilesToRegenerate, modelMessages, parseModelReply, parseTestSummary, pickAgent, rulesEdit } from "./lib.mjs";
+import { agentFor, dependenciesChanged, lockfilesToRegenerate, modelMessages, parseModelReply, parseTestSummary, rulesEdit } from "./lib.mjs";
 
 const { SAVEBELL_PAYLOAD = "{}", RUN_URL = null, DRY_LOCAL_DIR } = process.env;
 const payload = JSON.parse(SAVEBELL_PAYLOAD);
@@ -106,8 +106,10 @@ async function makeEdit(agent, b, repoDir, work) {
 
 async function main() {
   if (!SAVEBELL_URL || !FIX_ID || !NONCE || !REPO_DIR) throw new Error("missing savebell_url / fix_id / nonce in the payload, or REPO_DIR");
-  const agent = pickAgent(process.env);
   const b = await savebell(`/api/fix/${FIX_ID}/runner`, { run_url: RUN_URL });
+  // The executor is whatever the user approved in SaveBell (the brief), never a repository variable.
+  const agent = agentFor(b, process.env);
+  if (agent.ignored) log(agent.ignored);
   log(`brief for ${b.repo}@${b.base_sha.slice(0, 7)}; agent: ${agent.label}; allowed: ${b.allowed_files.join(", ")}`);
   const repoDir = REPO_DIR;
   const head = git(repoDir, "rev-parse", "HEAD").trim();

@@ -20,7 +20,7 @@ export type FindingAction = {
   note: string | null;
 };
 // mode: the user's saved remediation preference. "preview" needs no write access, so missing write permission is not a blocker there.
-export type ActionContext = { fixEnabled: boolean; allowPr: boolean; isDemo: boolean; hasInstallation: boolean; writePermission: boolean | null; mode?: RemediationMode };
+export type ActionContext = { fixEnabled: boolean; allowPr: boolean; isDemo: boolean; hasInstallation: boolean; writePermission: boolean | null; mode?: RemediationMode; dependencyPlan?: boolean };
 
 const ACTIVE: Partial<Record<Fix["status"], NonNullable<FindingAction["state"]>["key"]>> = { drafting: "preparing", approved: "creating_pr", queued: "preparing", running: "in_progress", merging: "checks" };
 
@@ -37,8 +37,9 @@ export function automationBlocker(a: Assessment, ctx: ActionContext): string | n
   const write = needsWrite(ctx.mode ?? "pr");
   if (!ctx.fixEnabled) return "Deployment configuration: automated fixes are turned off on this deployment (FIX_ENABLED is not set).";
   if (ctx.isDemo) return "Shared demo repository: fixes are preview-only here.";
-  if (!loc) return "No exact line was cited, so there is nothing safe to change automatically.";
-  if (UNFIXABLE.test(loc.file)) return `${loc.file.split("/").pop()} can't be changed automatically (lockfiles, secrets and CI workflows are excluded).`;
+  // A dependency plan changes the manifest named by the plan, not a cited code line.
+  if (!ctx.dependencyPlan && !loc) return "No exact line was cited, so there is nothing safe to change automatically.";
+  if (!ctx.dependencyPlan && loc && UNFIXABLE.test(loc.file)) return `${loc.file.split("/").pop()} can't be changed automatically (lockfiles, secrets and CI workflows are excluded).`;
   if (!ctx.hasInstallation) return "Repository permission: install the SaveBell GitHub App on this repository.";
   if (!write) return null;
   if (ctx.writePermission === false) return "Repository permission: the GitHub App needs write access to contents and pull requests.";

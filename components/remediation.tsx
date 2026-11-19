@@ -14,6 +14,8 @@ import { Assessment, Diff, RejectedHunks, StatusLadder } from "./fix-preview";
 import { RunLadder } from "./muse-fix";
 import type { ResultInfo } from "./result-dialog";
 import { DONE, fixSummary } from "@/lib/fix-summary";
+import type { DependencyPlan } from "@/lib/fix-plan";
+import { PlanReview, PostCheckView } from "./fix-plan-view";
 
 
 const WORKING = ["drafting", "queued", "running"];
@@ -45,6 +47,7 @@ function TechnicalDetails({ fix }: { fix: Fix }) {
     <details className="disclose"><summary>Technical details</summary>
       <div className="grid gap-4 mt-3 text-[calc(12px*var(--ui))]">
         {fix.summary && <div><div className="label">{fix.agent === "muse-code" ? "Muse Code's note (written before the checks)" : "Proposal note"}</div><p>{fix.summary}</p></div>}
+        {fix.post_check && fix.status !== "validated" && <PostCheckView fix={fix} />}
         {fix.error && <div><div className="label">Error</div><p className="mono [overflow-wrap:anywhere]">{fix.error}</p></div>}
         <StatusLadder fix={fix} />
         {fix.assessment && <Assessment fix={fix} />}
@@ -57,7 +60,7 @@ function TechnicalDetails({ fix }: { fix: Fix }) {
   );
 }
 
-export function Remediation({ assessmentId, initial, canAct, runnerEnabled, defaultBranch, repo, mode = "pr", onChange, onDone, permissionMissing = false }: { assessmentId: string; initial: Fix | null; canAct: boolean; runnerEnabled: boolean; defaultBranch: string; repo: string; embedded?: boolean; mode?: RemediationMode; onChange?: (f: Fix | null) => void; onDone?: (info: ResultInfo) => void; permissionMissing?: boolean }) {
+export function Remediation({ assessmentId, initial, canAct, runnerEnabled, defaultBranch, repo, mode = "pr", onChange, onDone, permissionMissing = false, plan = null }: { assessmentId: string; initial: Fix | null; canAct: boolean; runnerEnabled: boolean; defaultBranch: string; repo: string; embedded?: boolean; mode?: RemediationMode; onChange?: (f: Fix | null) => void; onDone?: (info: ResultInfo) => void; permissionMissing?: boolean; plan?: DependencyPlan | null }) {
   const [fix, setFix] = useState<Fix | null>(initial);
   const [dest, setDest] = useState<RemediationMode>(mode); // this attempt only; Settings is not changed
   const [busy, setBusy] = useState<string | null>(null);
@@ -78,11 +81,15 @@ export function Remediation({ assessmentId, initial, canAct, runnerEnabled, defa
   const run = (f: Fix) => call(`/api/fix/${f.id}/run`, { mode: dest, reviewed: true });
   // "Prepare fix" / "Start over": a NEW attempt (new fix record), then, with the runner, generate and check the patch.
   // Nothing in this step writes to the repository. A new attempt starts from the saved preference.
-  const prepare = (fresh: boolean) => act("prepare", async () => {
-    if (fresh) { setDest(mode); setReviewed(false); }
-    const j = await call("/api/fix", { assessment_id: assessmentId, force: fresh });
+  // First approval: the user approves exactly this plan; the server re-derives it, refuses if it changed, issues a
+  // single-use execution grant, and the run starts in the user's GitHub Actions. Nothing is written to the repository.
+  const approvePlan = (p: DependencyPlan, confirmMajor: boolean) => act("prepare", async () => {
+    setReviewed(false);
+    const j = await call("/api/fix", { assessment_id: assessmentId, plan_hash: p.plan_hash, approve: true, confirm_major: confirmMajor });
     if (runnerEnabled && j.fix && j.fix.status === "drafted" && j.fix.files.length) await run(j.fix);
   });
+  // "Start over": back to the plan; a new run needs a new approval.
+  const prepare = (fresh: boolean) => { if (fresh) { setDest(mode); setReviewed(false); setErr(null); setFix(null); } };
 
   useEffect(() => { onChange?.(fix); }, [fix]); // eslint-disable-line react-hooks/exhaustive-deps
   // "Approve & Fix" on a not-yet-checked patch: the user approved the patch they reviewed (approvedVersion). The
@@ -94,7 +101,7 @@ export function Remediation({ assessmentId, initial, canAct, runnerEnabled, defa
   const armed = useRef(false);
   useEffect(() => {
     if (!fix) return;
-    if (fix.status === "validated" && approvedVersion.current && !busy) {
+    if (fix.status === "validated" && approvedVersion.current && !busy && !fix.kind) {
       const v = approvedVersion.current; approvedVersion.current = null;
       if (fix.patch_version === v) void act("approve", () => call(`/api/fix/${fix.id}/approve`, { patch_version: v, mode: dest, reviewed: true }));
       else { setPatchChanged(true); setReviewed(false); }
@@ -135,14 +142,12 @@ export function Remediation({ assessmentId, initial, canAct, runnerEnabled, defa
   );
   const errLine = (err ? <p role="alert" className="text-[calc(13px*var(--ui))] tone-bad">{friendlyError(err) === "We couldn't prepare the fix." ? err : friendlyError(err)}</p> : null);
 
-  // 1. Nothing prepared yet
+  // 1. Nothing prepared yet: review the plan and approve it (first approval)
   if (!fix || (status === "drafting" && !working)) return (
     <div className="grid gap-3">
-      <h3 className="text-[calc(15px*var(--ui))] font-semibold">Prepare a fix</h3>
-      <p className="text-[calc(13px*var(--ui))] text-ink2">{runnerEnabled ? "Muse Code prepares a change and checks it in an isolated environment. Nothing is written to your repository." : "SaveBell drafts a proposed change from the cited files. Nothing is written to your repository."}</p>
+      {plan ? <PlanReview plan={plan} busy={busy === "prepare"} onApprove={(m) => approvePlan(plan, m)} /> : <p className="text-[calc(13px*var(--ui))] text-ink2">No fix plan is available for this finding.</p>}
       {destSelect}
       {errLine}
-      <button className="btn w-fit" disabled={!!busy || !canAct} onClick={() => prepare(false)}>Prepare fix</button>
     </div>
   );
 
@@ -203,7 +208,8 @@ export function Remediation({ assessmentId, initial, canAct, runnerEnabled, defa
       <div className="grid gap-3">
         <h3 className="text-[calc(15px*var(--ui))] font-semibold">Patch ready for review</h3>
         {patchChanged && <p role="alert" className="text-[calc(13px*var(--ui))] tone-warn">The checks changed the patch. Nothing was written. Review the final changes below, then approve them.</p>}
-        <p className="text-[calc(13px*var(--ui))] text-ink2">{status === "validated" ? "Muse Code prepared a fix for your repository." : "SaveBell drafted a proposed fix."}</p>
+        <p className="text-[calc(13px*var(--ui))] text-ink2">{status === "validated" ? "The runner in your GitHub Actions made the approved change and ran the checks. Review the result, then approve to create a draft pull request." : "SaveBell drafted a proposed fix."}</p>
+        {status === "validated" && <PostCheckView fix={fix} />}
         <Checks items={needsCheck ? fixChecks(fix).map((c) => (c.text === "Not tested yet" ? { ...c, text: "Not checked in an isolated environment yet" } : c)) : fixChecks(fix)} />
         {writeFailed && <p role="alert" className="text-[calc(13px*var(--ui))] tone-bad">The last attempt to write didn&apos;t finish. If a branch named {branch} exists on GitHub, it was created by that attempt; nothing else was changed.</p>}
         <details className="disclose" onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) setReviewed(true); }}>
@@ -218,7 +224,7 @@ export function Remediation({ assessmentId, initial, canAct, runnerEnabled, defa
             <button className="btn" onClick={async () => { try { await navigator.clipboard.writeText(files.map((x) => x.patch).join("\n")); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* clipboard unavailable */ } }}>{copied ? "Copied" : "Copy patch"}</button>
           ) : needsCheck ? (
             <button className="btn" disabled={!reviewed || !!busy || !canAct || permissionMissing} title={reviewed ? undefined : "Open Review changes first"}
-              onClick={() => { armed.current = true; approvedVersion.current = fix.patch_version; setPatchChanged(false); void act("prepare", () => run(fix)); }}>Approve &amp; Fix</button>
+              onClick={() => { armed.current = true; if (!fix.kind) approvedVersion.current = fix.patch_version; setPatchChanged(false); void act("prepare", () => run(fix)); }}>{fix.kind ? "Run approved plan" : "Approve & Fix"}</button>
           ) : (
             <button className="btn" disabled={!reviewed || !!busy || !canAct || permissionMissing} title={reviewed ? undefined : "Open Review changes first"}
               onClick={() => { armed.current = true; void act("approve", () => (status === "validated"

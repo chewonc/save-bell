@@ -90,3 +90,15 @@ export function parseModelReply(text, allowedFiles) {
   const files = (Array.isArray(j.files) ? j.files : []).filter((f) => f && typeof f.path === "string" && typeof f.after === "string" && allowed.has(f.path));
   return { files, summary: typeof j.summary === "string" ? j.summary.slice(0, 2000) : "", dropped: (Array.isArray(j.files) ? j.files.length : 0) - files.length };
 }
+
+/**
+ * The executor for this run comes from SaveBell's brief, which carries what the user approved. A repository variable
+ * asking for AI (SAVEBELL_AGENT=model|command) cannot override a rules-only approval, so no AI call (paid or not) can
+ * start without the user's approval. Only "rules" exists in this release.
+ */
+export function agentFor(brief, env) {
+  const approved = String(brief?.agent ?? "rules");
+  const requested = String(env.SAVEBELL_AGENT ?? "").trim().toLowerCase();
+  if (approved !== "rules") throw new Error(`executor "${approved}" is not supported by this runner`);
+  return { kind: "rules", label: "rules", ignored: requested && requested !== "rules" ? `SAVEBELL_AGENT=${requested} was ignored: AI was not approved for this run` : null };
+}

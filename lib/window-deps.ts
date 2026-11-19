@@ -66,8 +66,10 @@ export const windowDeps = (): Deps => ({
     if (!isVerified(withAgent)) throw new Precondition("the finding is not confirmed");
     const f = await store.getFinding(a.finding_id);
     const items = f ? (await Promise.all(f.items.map((i) => store.getItem(i)))).filter((x) => !!x) : [];
-    const fix = await draftFix(a, f, items, uid);
-    return { fix_id: fix.id, files: fix.status === "drafted" ? fix.files.length : 0, error: fix.error };
+    // Every change now needs the user's approval of its exact plan (lib/fix-plan.ts, lib/exec-grant.ts). A window
+    // cannot give that approval, so it stops here instead of drafting an unapproved change.
+    void draftFix; void items;
+    throw new Precondition("each change needs your approval of its exact fix plan; open the finding's Fix window to review and approve it");
   },
 
   async runnerBlocker(repoKey, uid) {
