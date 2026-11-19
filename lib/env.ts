@@ -16,7 +16,7 @@ export const env = {
   QSTASH_CURRENT_SIGNING_KEY: process.env.QSTASH_CURRENT_SIGNING_KEY ?? "",
   QSTASH_NEXT_SIGNING_KEY: process.env.QSTASH_NEXT_SIGNING_KEY ?? "",
   ALERT_WEBHOOK_URL: process.env.ALERT_WEBHOOK_URL ?? "", // Slack or Discord incoming webhook
-  ADMIN_TOKEN: process.env.ADMIN_TOKEN ?? "", // protects replay / manual routes
+  ADMIN_TOKEN: process.env.ADMIN_TOKEN?.trim() ?? "", // protects replay / manual routes
   // Identity + GitHub App (sign-in uses the App's OAuth client; repo access uses installation tokens)
   BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? "",
   GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID ?? "",
