@@ -39,7 +39,7 @@ export const env = {
   VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? process.env.VAPID_PUBLIC_KEY ?? "",
   VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY ?? "",
   VAPID_SUBJECT: process.env.VAPID_SUBJECT ?? "mailto:savebell@example.com",
-  APP_URL: (process.env.APP_URL || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000")).replace(/\/$/, ""),
+  APP_URL: (process.env.APP_URL?.trim() || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000")).replace(/\/$/, ""),
 };
 
 /** True only when a deployment has configured its own model endpoint. False on the hosted site. */
