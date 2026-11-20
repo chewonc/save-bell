@@ -140,8 +140,8 @@ test("Possible issue: no plan until the deterministic re-check ran; then a PREVE
   assert.deepEqual(d.lockfiles, ["package-lock.json"]);
   assert.equal(d.requires_major_confirmation, true);
   assert.ok(d.unconfirmed_conditions.includes("legacy key type"));
-  assert.match(d.why_target, /lowest such version above 8\.5\.1 that is outside every affected range/);
-  assert.ok(d.risks.some((r) => /Major version change/.test(r)));
+  assert.match(d.why_target, /9\.0\.0 as the lowest fixed version/);
+  assert.ok(d.risks.some((r) => /Major version: may break/.test(r)));
   assert.equal(p.code.available, false);
   assert.match(p.code.reason, /cannot choose them safely/);
   assert.equal(p.ai.available, false);

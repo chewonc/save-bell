@@ -17,8 +17,7 @@ export function PlanReview({ plan, busy, onApprove, repo }: { plan: DependencyPl
       <h3 className="text-[calc(15px*var(--ui))] font-semibold">{plan.preventive ? "Preventive dependency upgrade" : "Dependency upgrade"}</h3>
       {plan.preventive && (
         <div role="note" className="tone-warn grid gap-1">
-          <p className="font-medium">The vulnerable conditions were not confirmed in your code.</p>
-          <p className="text-ink2">This upgrade is offered as a precaution. It does not mean your project is affected, and the finding stays &quot;Possible issue&quot;.</p>
+          <p className="font-medium">Precaution only: your project may not be affected.</p>
           {plan.unconfirmed_conditions.length > 0 && <ul className="list-disc pl-5 text-ink2">{plan.unconfirmed_conditions.map((c) => <li key={c}>Not confirmed: {c}</li>)}</ul>}
         </div>
       )}
@@ -30,22 +29,22 @@ export function PlanReview({ plan, busy, onApprove, repo }: { plan: DependencyPl
         <dt className="text-ink2">Why this version</dt><dd>{plan.why_target}</dd>
         <dt className="text-ink2">Files</dt><dd className="mono [overflow-wrap:anywhere]">{plan.manifest}{plan.lockfiles.length ? `, ${plan.lockfiles.join(", ")} (regenerated)` : ""}</dd>
         <dt className="text-ink2">Known vulnerabilities at {plan.target}</dt><dd className={plan.known_vulns_at_target.status === "none" ? "" : "tone-warn"}>{plan.known_vulns_at_target.note}{plan.known_vulns_at_target.ids.length ? `: ${plan.known_vulns_at_target.ids.slice(0, 5).join(", ")}` : ""}</dd>
-        <dt className="text-ink2">AI</dt><dd>Not used. The change is made by a fixed rule in your GitHub Actions; no AI cost.</dd>
+        <dt className="text-ink2">AI</dt><dd>Not used</dd>
       </dl>
       <div><div className="label">Compatibility risk</div><ul className="list-disc pl-5">{plan.risks.map((r) => <li key={r}>{r}</li>)}</ul></div>
-      <p className="text-ink2">Approving starts one run in your repository&apos;s GitHub Actions that changes only {plan.package} to {plan.new_spec}, regenerates the lockfile and runs your tests. Nothing is written to your repository; you review the result and approve again before any pull request is created.</p>
+      <p className="text-ink2">Approving runs the change and your tests in GitHub Actions. Nothing is written until you approve the result.</p>
       <ActionsCostNote compact repo={repo} />
       <label className="flex items-start gap-2"><input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} /> <span>I reviewed this plan and approve running it once.</span></label>
-      {plan.requires_major_confirmation && <label className="flex items-start gap-2"><input type="checkbox" checked={major} onChange={(e) => setMajor(e.target.checked)} /> <span>I understand this is a major version upgrade ({plan.installed} → {plan.target}) that may break my application.</span></label>}
+      {plan.requires_major_confirmation && <label className="flex items-start gap-2"><input type="checkbox" checked={major} onChange={(e) => setMajor(e.target.checked)} /> <span>I understand this major upgrade ({plan.installed} → {plan.target}) may break my application.</span></label>}
       <button className="btn w-fit" disabled={!ok || busy} onClick={() => onApprove(major)}>{busy ? "Starting…" : "Approve plan & run"}</button>
     </div>
   );
 }
 
 const OUTCOME: Record<NonNullable<Fix["post_check"]>["outcome"], { label: string; tone: string; text: string }> = {
-  validated: { label: "Validated", tone: "tone-ok", text: "The advisory no longer applies to the version that will be installed." },
-  unverified: { label: "Unverified", tone: "tone-warn", text: "The change was made, but whether the security problem is gone could not be shown." },
-  failed: { label: "Failed", tone: "tone-bad", text: "The change or a required check failed." },
+  validated: { label: "Passed", tone: "tone-ok", text: "the new version is not affected." },
+  unverified: { label: "Not confirmed", tone: "tone-warn", text: "could not show the issue is gone." },
+  failed: { label: "Failed", tone: "tone-bad", text: "a required check failed." },
 };
 
 export function PostCheckView({ fix }: { fix: Fix }) {
@@ -60,11 +59,9 @@ export function PostCheckView({ fix }: { fix: Fix }) {
         <dt className="text-ink2">Installed after</dt><dd className="mono">{pc.installed_after ?? "not known"}</dd>
         <dt className="text-ink2">Advisory</dt><dd>{pc.advisory === "no_longer_applies" ? "No longer applies (outside the affected range)" : pc.advisory === "still_applies" ? "Still applies" : "Cannot tell"}</dd>
         <dt className="text-ink2">Other known vulnerabilities</dt><dd>{pc.known_vulns_after.note}</dd>
-        <dt className="text-ink2">Tests (separate)</dt><dd>{pc.tests}. Tests show the change did not break what they cover; they do not show the vulnerability is gone.</dd>
+        <dt className="text-ink2">Tests</dt><dd>{pc.tests}</dd>
       </dl>
       {pc.preconditions.length > 0 && <details className="disclose"><summary>Code conditions ({pc.preconditions.length})</summary><ul className="list-disc pl-5 mt-2">{pc.preconditions.map((p) => <li key={p.id}><span className="mono">{p.id}</span>: {p.state}. {p.note}</li>)}</ul></details>}
-      {pc.reasons.length > 0 && <ul className="list-disc pl-5 text-ink2">{pc.reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
-      {(fix.plan as { preventive?: boolean } | null)?.preventive && <p className="text-ink2">The original finding stays &quot;Possible issue&quot;: a preventive upgrade does not show that your project was affected.</p>}
     </div>
   );
 }

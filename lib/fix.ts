@@ -189,19 +189,37 @@ function dependencyPrText(fix: Fix, a: Assessment, f: Finding | null, appUrl: st
   const ids = f?.ids.join(", ") || a.finding_id;
   // Written for someone who has never heard of SaveBell: plain words, no internal IDs, links, audit logs or verdict labels.
   void appUrl;
-  const advisories = (f?.ids ?? []).map((id) => /^GHSA-/i.test(id) ? `[${id}](https://github.com/advisories/${id})` : id).join(", ") || ids;
+  void ids;
+  // Each ID is explained, because readers may not know what GHSA or CVE means.
+  const idLines = (f?.ids ?? []).map((id) => /^GHSA-/i.test(id)
+    ? `[${id}](https://github.com/advisories/${id}) (GitHub's security advisory ID)`
+    : /^CVE-/i.test(id) ? `[${id}](https://nvd.nist.gov/vuln/detail/${id}) (public vulnerability ID used across the industry)` : id).join(", ");
+  // Registry text is untrusted: plain text only, no markdown or HTML, length-limited.
+  const clean = (s: string | undefined) => (s ?? "").replace(/[<>`*_[\]()#|!]/g, "").replace(/\s+/g, " ").trim().slice(0, 160);
+  const what = clean(f?.claim?.plain_title) || clean(f?.title);
+  const detail = f?.claim?.plain_title && f.title ? clean(f.title) : "";
   const t = fix.runner?.tests;
-  const tests = t?.executed ? (t.exit_code === 0 ? "passed" : "failed") : "not run (none found)";
-  const security = pc?.outcome === "validated" ? "passed" : pc?.outcome === "failed" ? "failed" : "not confirmed";
+  const tests = t?.executed ? `${t.exit_code === 0 ? "passed" : "failed"}${t.summary?.total ? ` (${t.summary.passed} of ${t.summary.total})` : ""}` : "not run (no tests found)";
+  const security = pc?.outcome === "validated" ? `passed: ${p.target} is outside the affected versions` : pc?.outcome === "failed" ? "failed" : "not confirmed";
+  const approver = [...(fix.events ?? [])].reverse().find((e) => e.action === "approved" || e.action === "authorized")?.actor;
+  const day = (fix.runner?.finished_at ?? new Date().toISOString()).slice(0, 10);
+  const files = fix.files.map((x) => `\`${x.path}\``).join(" and ");
   const title = p.preventive
     ? `Upgrade ${p.package} from ${p.installed} to ${p.target} as a security precaution`
     : `Upgrade ${p.package} from ${p.installed} to ${p.target} to fix a security vulnerability`;
-  // Key points only: what, why, what to check, results.
-  const body = `Upgrades \`${p.package}\` from ${p.installed} to ${p.target} to fix a known vulnerability (${advisories}).${p.preventive ? " This is a precaution; the affected feature was not found in use." : ""}
+  // Who / what / when / where / why / how, one or two plain lines each.
+  const body = `**What:** Upgrades \`${p.package}\` from ${p.installed} to ${p.target}.
 
-- Tests: ${tests}
-- Security check: ${security}${p.change === "major" ? `\n- **Major version:** may break existing code. Please check the ${p.package} release notes before merging.` : ""}
+**Why:** Version ${p.installed} has a known security vulnerability${what ? `: ${what}` : ""}.${detail ? ` (${detail})` : ""} Version ${p.target} is not affected.${p.preventive ? " This is a precaution: the affected feature was not found in use in this project." : ""}
+${idLines ? `Reference: ${idLines}.` : ""}
 
-<sub>Prepared by SaveBell with the repository owner's approval.</sub>`;
+**Where:** ${files}. No other code was changed.
+
+**How:** The version number was changed and the lockfile regenerated in this repository's GitHub Actions, using a fixed rule (no AI). The tests were then run, and the new version was checked against public vulnerability databases.
+
+**Results:** Tests ${tests}. Security check ${security}.
+
+**Who and when:** Prepared by SaveBell on ${day}${approver && !approver.includes(":") ? `, approved by @${approver}` : " with the repository owner's approval"}.
+${p.change === "major" ? `\n**Before merging:** this is a major version upgrade and may break existing code. Please read the ${p.package} release notes and test the change.` : "\n**Before merging:** please review and test the change."}`;
   return { title, body };
 }

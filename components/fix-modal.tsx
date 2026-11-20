@@ -243,9 +243,8 @@ function AutoTab({ c, onChange, goVerify, goAgent, recheck, onDone }: { c: Ctx; 
         </div>
       )}
       {(c.can_act || pending || c.grant || c.fix) && <Remediation assessmentId={c.assessment_id} initial={c.fix} canAct={c.can_act} runnerEnabled={c.runner_enabled} defaultBranch={c.default_branch} repo={c.repo} mode={c.mode} onChange={onChange} onDone={onDone} permissionMissing={!!c.grant} plan={depPlan} />}
-      {depPlan && c.plans && !c.plans.code.available && <p className="text-[calc(12px*var(--ui))] text-ink2">Code change without AI: {c.plans.code.reason}</p>}
       <div className="flex flex-wrap items-center gap-2 text-[calc(13px*var(--ui))]">
-        <span className="text-ink2">Auto Fix uses fixed rules, not AI. To have your own AI make the change, use the AI Agent tab.</span>
+        <span className="text-ink2" title={c.plans && !c.plans.code.available ? c.plans.code.reason : undefined}>{depPlan && c.plans && !c.plans.code.available ? "Code changes need your own AI." : "Auto Fix uses rules, not AI."}</span>
         <button type="button" className="btn-ghost" onClick={goAgent}>Use my AI</button>
       </div>
       <HistoryView history={c.history ?? []} />

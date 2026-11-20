@@ -32,8 +32,10 @@ test("pull request text for a dependency plan is plain: no internal IDs, links t
   const { title, body } = prText(fix, { id: "case-1", finding_id: "f", verdict: "Affected" } as never, { ids: ["GHSA-hjrf-2m68-5959"] } as never, "https://app.example");
   assert.equal(title, "Upgrade jsonwebtoken from 8.5.1 to 9.0.0 to fix a security vulnerability");
   for (const bad of [/deadbeefcafe/, /app\.example/, /Audit trail/, /Verdict/, /\bcase-1\b/, /abc\b/]) assert.doesNotMatch(body, bad);
-  assert.match(body, /Major version/);
-  assert.ok(body.split("\n").filter(Boolean).length <= 6, "key points only");
+  assert.match(body, /major version upgrade/);
+  for (const h of ["What", "Why", "Where", "How", "Results", "Who and when"]) assert.match(body, new RegExp(`\\*\\*${h}:\\*\\*`));
+  assert.match(body, /GitHub's security advisory ID/, "IDs are explained");
+  assert.ok(body.split("\n").filter(Boolean).length <= 12, "short sections");
   assert.match(body, /Prepared by SaveBell/);
 });
 

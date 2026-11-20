@@ -208,7 +208,7 @@ export function Remediation({ assessmentId, initial, canAct, runnerEnabled, defa
       <div className="grid gap-3">
         <h3 className="text-[calc(15px*var(--ui))] font-semibold">Patch ready for review</h3>
         {patchChanged && <p role="alert" className="text-[calc(13px*var(--ui))] tone-warn">The checks changed the patch. Nothing was written. Review the final changes below, then approve them.</p>}
-        <p className="text-[calc(13px*var(--ui))] text-ink2">{status === "validated" ? "The runner in your GitHub Actions made the approved change and ran the checks. Review the result, then approve to create a draft pull request." : "SaveBell drafted a proposed fix."}</p>
+        <p className="text-[calc(13px*var(--ui))] text-ink2">{status === "validated" ? "The change ran in your GitHub Actions. Review it, then approve." : "SaveBell drafted a proposed fix."}</p>
         {status === "validated" && <PostCheckView fix={fix} />}
         <Checks items={needsCheck ? fixChecks(fix).map((c) => (c.text === "Not tested yet" ? { ...c, text: "Not checked in an isolated environment yet" } : c)) : fixChecks(fix)} />
         {writeFailed && <p role="alert" className="text-[calc(13px*var(--ui))] tone-bad">The last attempt to write didn&apos;t finish. If a branch named {branch} exists on GitHub, it was created by that attempt; nothing else was changed.</p>}
