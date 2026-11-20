@@ -171,20 +171,12 @@ export function prText(fix: Fix, a: Assessment, f: Finding | null, appUrl: strin
   void caseUrl; void permalink;
   const advisories = (f?.ids ?? []).map((id) => /^GHSA-/i.test(id) ? `[${id}](https://github.com/advisories/${id})` : id).join(", ") || ids;
   const t = fix.runner?.tests;
-  const tests = t?.executed ? `\`${t.command}\` ${t.exit_code === 0 ? "passed" : "failed"}.` : "No tests were run for this change.";
-  const body = `## Summary
-This pull request proposes a code change for a known security vulnerability (${advisories}). It has **not been verified** that the change fixes the vulnerability.
+  const tests = t?.executed ? (t.exit_code === 0 ? "passed" : "failed") : "not run";
+  const body = `Proposed code change for a known vulnerability (${advisories}).${fix.summary ? ` ${fix.summary}` : ""}
 
-## What changed
-${fix.files.map((x) => `- \`${x.path}\`${x.hunks.length ? `: ${x.hunks.map((h) => h.rationale).join("; ")}` : ""}`).join("\n")}
-${fix.summary ? `\n${fix.summary}\n` : ""}
-## Before merging
-- Please review the change carefully and test it in your environment.
-${fix.caveats.length ? fix.caveats.map((c) => `- ${c}`).join("\n") + "\n" : ""}${fix.mode === "push" ? "- This pull request will be merged only after your repository's checks pass.\n" : ""}
-## Checks
-- Tests: ${tests} Tests confirm the project still works; they do not prove the vulnerability is fixed.
+- Tests: ${tests}
+- Security check: not confirmed. Please review and test before merging.
 
----
 <sub>Prepared by SaveBell with the repository owner's approval.</sub>`;
   return { title: `Proposed fix for a security vulnerability (${ids}), not yet verified`, body };
 }
@@ -199,28 +191,17 @@ function dependencyPrText(fix: Fix, a: Assessment, f: Finding | null, appUrl: st
   void appUrl;
   const advisories = (f?.ids ?? []).map((id) => /^GHSA-/i.test(id) ? `[${id}](https://github.com/advisories/${id})` : id).join(", ") || ids;
   const t = fix.runner?.tests;
-  const tests = t?.executed
-    ? `\`${t.command}\` ${t.exit_code === 0 ? "passed" : "failed"}${t.summary ? ` (${t.summary.passed} of ${t.summary.total} tests)` : ""}.`
-    : "No test command was found, so no tests were run.";
-  const lock = fix.files.some((x) => /lock/i.test(x.path));
+  const tests = t?.executed ? (t.exit_code === 0 ? "passed" : "failed") : "not run (none found)";
+  const security = pc?.outcome === "validated" ? "passed" : pc?.outcome === "failed" ? "failed" : "not confirmed";
   const title = p.preventive
     ? `Upgrade ${p.package} from ${p.installed} to ${p.target} as a security precaution`
     : `Upgrade ${p.package} from ${p.installed} to ${p.target} to fix a security vulnerability`;
-  const body = `## Summary
-This pull request upgrades \`${p.package}\` from ${p.installed} to ${p.target}. Version ${p.installed} is affected by a known security vulnerability (${advisories}); version ${p.target} is not.${p.preventive ? `\n\nThis is a precaution: it was not confirmed that this project uses the affected feature.` : ""}
+  // Key points only: what, why, what to check, results.
+  const body = `Upgrades \`${p.package}\` from ${p.installed} to ${p.target} to fix a known vulnerability (${advisories}).${p.preventive ? " This is a precaution; the affected feature was not found in use." : ""}
 
-## What changed
-${fix.files.map((x) => /lock/i.test(x.path) ? `- \`${x.path}\`: regenerated for the new version.` : `- \`${x.path}\`: \`${p.package}\` set to \`${p.new_spec}\`.`).join("\n")}
-- No other code was changed.
+- Tests: ${tests}
+- Security check: ${security}${p.change === "major" ? `\n- **Major version:** may break existing code. Please check the ${p.package} release notes before merging.` : ""}
 
-## Before merging
-${p.change === "major" ? `- This is a major version upgrade and may include breaking changes. Please read the ${p.package} release notes.\n` : ""}${lock ? `- Packages that ${p.package} depends on may also change in the lockfile.\n` : ""}- Please review and test this change before merging.
-
-## Checks
-- Tests: ${tests} Tests confirm the project still works; they do not prove the vulnerability is fixed.
-- Security: ${pc ? (pc.outcome === "validated" ? `version ${pc.installed_after ?? p.target} is outside the affected versions, and no other known vulnerability is listed for it.` : `not confirmed (${pc.known_vulns_after.note}).`) : "not checked."}
-
----
 <sub>Prepared by SaveBell with the repository owner's approval.</sub>`;
   return { title, body };
 }
