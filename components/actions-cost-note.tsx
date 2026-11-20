@@ -35,7 +35,7 @@ export function CostCheck({ repo }: { repo: string }) {
   const q = encodeURIComponent(AI_QUESTION);
   return (
     <div className="grid gap-2">
-      <button type="button" className="btn w-fit" onClick={check} disabled={busy}>{busy ? "Calculating…" : "Check my cost (free)"}</button>
+      <button type="button" className="btn w-fit" onClick={check} disabled={busy}>{busy ? "Calculating…" : "Check my fixing cost (free)"}</button>
       {est && <CostResult est={est} />}
       <details className="disclose">
         <summary>How this is calculated</summary>
@@ -73,7 +73,7 @@ export function ActionsCostNote({ compact = false, repo }: { compact?: boolean; 
   const billing = <Ext href="https://github.com/settings/billing">Billing settings</Ext>;
   if (compact) return (
     <div role="note" className="grid gap-2 border hair rounded-[8px] px-3 py-3">
-      <p><b>Cost:</b> paid by your GitHub account, not SaveBell. About {usd(4 * PRICE_PER_MIN)} per run, or <b>$0</b> within your free minutes. No AI cost.</p>
+      <p><b>Cost:</b> billed through GitHub Actions to your account, not by SaveBell. About {usd(4 * PRICE_PER_MIN)} per run, or <b>$0</b> within your free minutes. No AI cost.</p>
       {repo && <CostCheck repo={repo} />}
     </div>
   );
