@@ -145,7 +145,7 @@ export function Remediation({ assessmentId, initial, canAct, runnerEnabled, defa
   // 1. Nothing prepared yet: review the plan and approve it (first approval)
   if (!fix || (status === "drafting" && !working)) return (
     <div className="grid gap-3">
-      {plan ? <PlanReview plan={plan} busy={busy === "prepare"} onApprove={(m) => approvePlan(plan, m)} /> : <p className="text-[calc(13px*var(--ui))] text-ink2">No fix plan is available for this finding.</p>}
+      {plan ? <PlanReview plan={plan} repo={repo.split("/").slice(0, 2).join("/")}busy={busy === "prepare"} onApprove={(m) => approvePlan(plan, m)} /> : <p className="text-[calc(13px*var(--ui))] text-ink2">No fix plan is available for this finding.</p>}
       {destSelect}
       {errLine}
     </div>

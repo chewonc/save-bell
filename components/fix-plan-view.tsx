@@ -4,10 +4,11 @@
 import { useState } from "react";
 import type { DependencyPlan, FixPlans } from "@/lib/fix-plan";
 import type { Fix, VerdictHistoryEntry } from "@/lib/schema";
+import { ActionsCostNote } from "@/components/actions-cost-note";
 
 const CHANGE: Record<DependencyPlan["change"], string> = { major: "Major version change", minor: "Minor version change", patch: "Patch version change", other: "Version change" };
 
-export function PlanReview({ plan, busy, onApprove }: { plan: DependencyPlan; busy: boolean; onApprove: (confirmMajor: boolean) => void }) {
+export function PlanReview({ plan, busy, onApprove, repo }: { plan: DependencyPlan; busy: boolean; onApprove: (confirmMajor: boolean) => void; repo?: string }) {
   const [reviewed, setReviewed] = useState(false);
   const [major, setMajor] = useState(false);
   const ok = reviewed && (!plan.requires_major_confirmation || major);
@@ -33,6 +34,7 @@ export function PlanReview({ plan, busy, onApprove }: { plan: DependencyPlan; bu
       </dl>
       <div><div className="label">Compatibility risk</div><ul className="list-disc pl-5">{plan.risks.map((r) => <li key={r}>{r}</li>)}</ul></div>
       <p className="text-ink2">Approving starts one run in your repository&apos;s GitHub Actions that changes only {plan.package} to {plan.new_spec}, regenerates the lockfile and runs your tests. Nothing is written to your repository; you review the result and approve again before any pull request is created.</p>
+      <ActionsCostNote compact repo={repo} />
       <label className="flex items-start gap-2"><input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} /> <span>I reviewed this plan and approve running it once.</span></label>
       {plan.requires_major_confirmation && <label className="flex items-start gap-2"><input type="checkbox" checked={major} onChange={(e) => setMajor(e.target.checked)} /> <span>I understand this is a major version upgrade ({plan.installed} → {plan.target}) that may break my application.</span></label>}
       <button className="btn w-fit" disabled={!ok || busy} onClick={() => onApprove(major)}>{busy ? "Starting…" : "Approve plan & run"}</button>

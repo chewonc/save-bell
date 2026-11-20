@@ -7,6 +7,7 @@ import { fixBranch } from "@/lib/fix-branch";
 import { useEffect, useRef, useState } from "react";
 import type { Fix } from "@/lib/schema";
 import { isStaleRun } from "@/lib/run-stale";
+import { ActionsCostNote } from "@/components/actions-cost-note";
 
 type Setup = { installed: boolean; path: string; workflow: string; checked_branch: string | null; error: string | null };
 type Info = { allowed_files: string[]; test_command: string | null; default_branch: string; blockers: string[]; setup?: Setup | null };
@@ -134,6 +135,7 @@ export function RunnerSetupHelp({ setup, repo }: { setup: Setup; repo: string })
     <div className="grid gap-2 border hair rounded-[6px] p-3">
       <div className="label">One-time setup</div>
       <p>Add <span className="mono">{setup.path}</span> to the default branch of <span className="mono">{repo}</span>. It holds no SaveBell secret: the runner proves which repository it runs in with GitHub&apos;s own token. Without further settings the fix is made by rules, with no AI. To use your own AI, set the repository variable <span className="mono">SAVEBELL_AGENT</span> to <span className="mono">model</span> or <span className="mono">command</span>, as described in the file.</p>
+      <ActionsCostNote repo={repo} />
       <pre className="mono whitespace-pre overflow-auto max-h-56 text-[calc(11px*var(--ui))]">{setup.workflow}</pre>
       <div className="flex flex-wrap gap-2">
         <button type="button" className="btn-ghost" onClick={async () => { try { await navigator.clipboard.writeText(setup.workflow); setCopied(true); } catch { setCopied(false); } }}>{copied ? "Copied" : "Copy workflow"}</button>
