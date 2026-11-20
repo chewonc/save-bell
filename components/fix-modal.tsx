@@ -98,12 +98,12 @@ export function FixModal({ assessmentId: initialId, onClose }: { assessmentId: s
     <dialog ref={ref} aria-labelledby={titleId} onClick={(e) => { if (e.target === ref.current) close(); }}
       className="modal m-auto w-[min(640px,calc(100vw-32px))] max-h-[min(86vh,820px)] overflow-hidden rounded-[12px] border hair bg-raised text-ink p-0 backdrop:bg-black/40">
       {/* Column layout so the scrolling panel takes exactly the height left under the header and tabs (no hidden bottom). */}
-      <div className="flex flex-col max-h-[min(86vh,820px)]">
-      <div className="flex items-center justify-between gap-3 px-4 sm:px-5 pt-4 pb-3 border-b hair">
+      <div className="flex flex-col max-h-[min(86vh,820px)] pb-3 pr-1.5">
+      <div className="flex shrink-0 items-center justify-between gap-3 px-4 sm:px-5 pt-4 pb-3 border-b hair">
         <h2 id={titleId} className="text-[calc(16px*var(--ui))] font-semibold">Fix security issue</h2>
         <button type="button" className="text-ink2 hover:text-ink text-[calc(22px*var(--ui))] leading-none w-10 h-10 -mr-2 grid place-items-center" aria-label="Close" onClick={close}>×</button>
       </div>
-      <div role="tablist" aria-label="Ways to fix" className="flex gap-1 px-4 sm:px-5 pt-3 overflow-x-auto">
+      <div role="tablist" aria-label="Ways to fix" className="flex shrink-0 gap-1 px-4 sm:px-5 pt-3 overflow-x-auto overflow-y-hidden">
         {tabs.map((t) => (
           <button key={t.id} type="button" role="tab" id={`${titleId}-${t.id}`} aria-selected={tab === t.id} aria-controls={`${titleId}-panel`} disabled={!ctx}
             className={`px-2.5 sm:px-3 h-9 rounded-[6px] text-[calc(13px*var(--ui))] whitespace-nowrap ${tab === t.id ? "bg-[var(--line)] font-semibold" : "text-ink2 hover:text-ink"}`} onClick={() => setTab(t.id)}>{t.label}</button>
