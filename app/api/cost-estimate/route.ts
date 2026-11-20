@@ -41,7 +41,8 @@ async function monthUsage(gh: (p: string) => Promise<Response>, owner: { login: 
   const base = owner.type === "Organization" ? `/organizations/${owner.login}` : `/users/${owner.login}`;
   try {
     const r = await gh(`${base}/settings/billing/usage?year=${d.getUTCFullYear()}&month=${d.getUTCMonth() + 1}`);
-    if (!r.ok) return { available: false, reason: r.status === 403 || r.status === 404 ? "GitHub did not share this account's billing usage with SaveBell (it needs your permission to read billing, or you are not a billing manager of the account)." : `GitHub billing usage returned ${r.status}.` };
+    // The status code is shown so the cause can be told apart (403/404: no Plan permission or not a billing manager).
+    if (!r.ok) return { available: false, reason: `GitHub returned ${r.status} for billing usage.` };
     const items = ((await r.json()) as { usageItems?: UsageItem[] }).usageItems ?? [];
     const act = items.filter((i) => i.product === "actions" && /minute/i.test(i.unitType));
     let plan: string | null = null;

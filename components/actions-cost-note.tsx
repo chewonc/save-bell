@@ -61,7 +61,7 @@ function CostResult({ est }: { est: Estimate }) {
     <ul className="grid gap-1">
       <li><b>Per run: about {usd(perRun * PRICE_PER_MIN)}</b> ({perRun} min, {basis}). Maximum {usd(TIMEOUT_MIN * PRICE_PER_MIN)}.</li>
       <li>{left === null
-        ? <>Free minutes left: <b>not available</b>. Please check <Ext href={USAGE_URL}>GitHub billing usage</Ext>.</>
+        ? <span className="tone-warn"><b>Free minutes left: not available</b>{u && !u.available ? ` (${u.reason})` : ""}. Please check <Ext href={USAGE_URL}>GitHub billing usage</Ext>.</span>
         : left >= perRun
           ? <span className="tone-ok"><b>This run is free.</b> {left.toLocaleString()} free minutes left this month (about {Math.floor(left / perRun)} runs).</span>
           : <span className="tone-warn"><b>Free minutes used up.</b> Runs are charged only if your spending limit is above $0.</span>}</li>
