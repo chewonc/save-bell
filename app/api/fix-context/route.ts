@@ -48,7 +48,8 @@ export async function GET(req: Request) {
   const instRec = inst ? await store.getInstallation(inst).catch(() => null) : null;
   const grant = !actionable || !blocker?.startsWith("Repository permission") ? null
     : !inst ? { kind: "install" as const, url: "/settings#repositories" }
-    : perm?.kind === "user_missing" || perm?.kind === "user_unknown" ? { kind: perm.kind, url: null }
+    // signin: the sign-in token is missing or rejected (expired after 8 hours), so signing in again is the fix.
+    : perm?.kind === "user_missing" || perm?.kind === "user_unknown" ? { kind: perm.kind, url: null, signin: perm.user.status === "unknown" && /sign in with GitHub again|401|bad credentials/i.test(perm.user.reason) }
     : perm && !perm.ok ? { kind: "accept" as const, unknown: perm.kind === "app_unknown", missing: perm.app.status === "missing" ? perm.app.missing : [], url: instRec?.account_type === "Organization" ? `https://github.com/organizations/${instRec.account}/settings/installations/${inst}` : `https://github.com/settings/installations/${inst}` }
     : !ur?.allow_pr ? { kind: "allow_changes" as const, url: null }
     : null;

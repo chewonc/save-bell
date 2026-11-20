@@ -15,6 +15,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { Fix } from "@/lib/schema";
 import type { RemediationMode } from "@/lib/remediation-mode";
 import { AskAgent } from "./ask-agent";
+import { signInWithGitHub } from "@/lib/auth-client";
 import { Remediation } from "./remediation";
 import { ResultDialog, type ResultInfo } from "./result-dialog";
 
@@ -26,7 +27,7 @@ type Ctx = {
   plans: FixPlans | null; history: VerdictHistoryEntry[];
   not_affected_because?: { text: string; why: string; basis: string | null }[];
   mode: RemediationMode; after_fix: string; agent_connected: boolean;
-  grant: { kind: "install" | "accept" | "allow_changes" | "user_missing" | "user_unknown"; url: string | null; missing?: string[]; unknown?: boolean } | null; repo_key: string;
+  grant: { kind: "install" | "accept" | "allow_changes" | "user_missing" | "user_unknown"; url: string | null; missing?: string[]; unknown?: boolean; signin?: boolean } | null; repo_key: string;
 };
 type Tab = "verify" | "agent" | "auto";
 export type Evidence = { text: string; state: string; computed?: boolean; basis?: string | null; refs: { file: string; line: number | null; quote: string; url: string | null }[] };
@@ -96,9 +97,10 @@ export function FixModal({ assessmentId: initialId, onClose }: { assessmentId: s
   const tabs: { id: Tab; label: string }[] = [{ id: "verify", label: "Verify" }, { id: "auto", label: "Auto Fix" }, { id: "agent", label: "AI Agent" }];
   return (
     <dialog ref={ref} aria-labelledby={titleId} onClick={(e) => { if (e.target === ref.current) close(); }}
-      className="modal m-auto w-[min(640px,calc(100vw-32px))] max-h-[min(86vh,820px)] overflow-hidden rounded-[12px] border hair bg-raised text-ink p-0 backdrop:bg-black/40">
-      {/* Column layout so the scrolling panel takes exactly the height left under the header and tabs (no hidden bottom). */}
-      <div className="flex flex-col max-h-[min(86vh,820px)] pb-3 pr-1.5">
+      className="modal m-auto w-[min(640px,calc(100vw-32px))] h-[min(86vh,820px)] overflow-hidden rounded-[12px] border hair bg-raised text-ink p-0 backdrop:bg-black/40">
+      {/* Fixed height, so every tab has the same window size. h-full stays inside the 1px border (no clipped scrollbar arrow);
+          the column layout lets the scrolling panel take exactly the height left under the header and tabs. */}
+      <div className="flex flex-col h-full pb-4 pr-1.5">
       <div className="flex shrink-0 items-center justify-between gap-3 px-4 sm:px-5 pt-4 pb-3 border-b hair">
         <h2 id={titleId} className="text-[calc(16px*var(--ui))] font-semibold">Fix security issue</h2>
         <button type="button" className="text-ink2 hover:text-ink text-[calc(22px*var(--ui))] leading-none w-10 h-10 -mr-2 grid place-items-center" aria-label="Close" onClick={close}>×</button>
@@ -265,13 +267,15 @@ function GrantPermission({ c, recheck }: { c: Ctx; recheck: () => void }) {
   // Missing (GitHub confirmed it is absent) and unconfirmed (GitHub could not be asked) are told apart; both block.
   const WHY: Record<string, string> = { "Actions: write": "starts the fix run in your own GitHub Actions", "Contents: write": "creates the branch with the change you approve", "Pull requests: write": "opens the draft pull request" };
   const title = g.kind === "user_missing" ? "Your GitHub account can't change this repository."
+    : g.kind === "user_unknown" && g.signin ? "Your GitHub sign-in has expired."
     : g.kind === "user_unknown" ? "SaveBell couldn't confirm your access to this repository."
     : g.kind === "accept" && g.unknown ? "SaveBell couldn't confirm its GitHub App permissions for this repository."
     : g.kind === "accept" ? "SaveBell's GitHub App is missing a permission for this repository."
     : "SaveBell doesn't have permission to change this repository.";
   const how = g.kind === "install" ? "Install the SaveBell GitHub App on this repository. GitHub asks you to choose the repositories and confirm."
     : g.kind === "user_missing" ? "SaveBell runs and writes fixes only for people with write access to the repository. Ask a maintainer for write access, or ask a maintainer to run this fix."
-    : g.kind === "user_unknown" ? "Auto Fix stays off until GitHub confirms your write access. Sign in with GitHub again, then try again."
+    : g.kind === "user_unknown" && g.signin ? "Please sign in again so GitHub can confirm your access. You will return to this page."
+    : g.kind === "user_unknown" ? "Auto Fix stays off until GitHub confirms your write access. Please try again."
     : g.kind === "accept" && g.unknown ? "Auto Fix stays off until the permissions are confirmed. Check that the SaveBell App is installed on this repository with Actions, Contents and Pull requests set to Read and write, then try again."
     : g.kind === "accept" ? `Approve these on GitHub: ${(g.missing ?? []).map((m) => `${m} (${WHY[m] ?? "needed for Auto Fix"})`).join("; ")}. Nothing is changed in your code by approving.`
     : "Changes are turned off for this repository in SaveBell. Turning them on writes nothing to GitHub; each change still needs your approval.";
@@ -285,7 +289,10 @@ function GrantPermission({ c, recheck }: { c: Ctx; recheck: () => void }) {
       <p className="tone-bad font-medium">{title}</p>
       <p className="text-ink2">{how}</p>
       {(g.kind === "user_missing" || g.kind === "user_unknown") ? (
-        g.kind === "user_unknown" && <div><button type="button" className="btn-ghost" onClick={recheck}>Try again</button></div>
+        // GitHub sign-in tokens expire after 8 hours; signing in again is the fix, so offer it directly.
+        g.kind === "user_unknown" && <div>{g.signin
+          ? <button type="button" className="btn" disabled={busy} onClick={() => { setBusy(true); void signInWithGitHub(window.location.pathname + window.location.search); }}>{busy ? "Opening GitHub…" : "Sign in with GitHub"}</button>
+          : <button type="button" className="btn-ghost" onClick={recheck}>Try again</button>}</div>
       ) : <div className="flex flex-wrap items-center gap-2">
         {g.kind === "allow_changes"
           ? <button type="button" className="btn" disabled={busy} onClick={allow}>{busy ? "Granting…" : "Grant Permission"}</button>
