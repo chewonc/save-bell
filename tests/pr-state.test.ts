@@ -20,8 +20,15 @@ test("closed without merging -> cancelled (Fix again); merged -> merged; open ->
   let calls = 0;
   await refreshPrStates([fix("c")], "t", (async () => { calls++; return new Response("{}"); }) as unknown as typeof fetch, 1e12 + 60e3);
   assert.equal(calls, 0);
-  // No signed-in token (MCP, scheduled jobs): nothing changes.
+  // No token at all: nothing changes.
   assert.equal((await refreshPrStates([fix("d")], null, gh({ state: "closed" })))[0].status, "pr_created");
+  // Expired user token: the App's own token is used instead.
+  const byToken = (async (_u: string, init: RequestInit) => (init.headers as Record<string, string>).authorization === "Bearer app"
+    ? new Response(JSON.stringify({ state: "closed", merged: false })) : new Response("{}", { status: 401 })) as unknown as typeof fetch;
+  assert.equal((await refreshPrStates([fix("e")], "expired", byToken, 1e12, async () => "app"))[0].status, "cancelled");
+  // A failed read is not throttled: the next view tries again.
+  await refreshPrStates([fix("g")], "expired", (async () => new Response("{}", { status: 401 })) as unknown as typeof fetch, 1e12);
+  assert.equal((await refreshPrStates([fix("g")], "ok", gh({ state: "closed" }), 1e12 + 1000))[0].status, "cancelled");
 });
 
 test("after a closed pull request the finding offers Fix again with a plain note", () => {

@@ -15,9 +15,10 @@ export async function fixesFor(uid: string, assessmentId: string): Promise<Fix[]
   // A pull request closed or merged on GitHub updates the fix here, so every view (list, case page, Fix window, bulk) agrees.
   if (!own.some((f) => f.pr_number && (f.status === "pr_created" || f.status === "blocked_by_protection"))) return own;
   try {
-    const token = await (await import("./session")).githubUserToken();
-    return await (await import("./pr-state")).refreshPrStates(own, token);
-  } catch { return own; } // no browser session (MCP, scheduled jobs): keep the stored status
+    const token = await (await import("./session")).githubUserToken().catch(() => null); // none for MCP / scheduled jobs
+    const m = await import("./pr-state");
+    return await m.refreshPrStates(own, token, fetch, Date.now(), m.appPrToken);
+  } catch { return own; }
 }
 
 /** A fix the caller owns, or null (callers answer 404 so ids cannot be probed). */
