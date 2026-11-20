@@ -17,6 +17,23 @@ test("patch summary: files, tests, and never claims the security fix is verified
   assert.match(fixChecks({ ...base, agent: "runner", kind: "dependency", runner: null } as Fix)[1].text, /Not run yet/);
   assert.match(fixChecks({ ...base, agent: "runner", kind: "dependency", runner: { finished_at: "t", tests: null } } as unknown as Fix)[1].text, /No tests were found/);
   for (const c of [ok, failed]) assert.ok(c.some((x) => x.text === "Security fix not yet verified"));
+  // The summary follows the security re-check, so it never contradicts a Validated result shown above it.
+  const re = (outcome: string) => fixChecks({ ...base, runner: null, post_check: { outcome } } as unknown as Fix).at(-1)!;
+  assert.deepEqual(re("validated"), { tone: "ok", text: "Security re-check passed" });
+  assert.equal(re("failed").tone, "bad");
+  assert.equal(re("unverified").text, "Security fix not yet verified");
+});
+
+test("pull request text for a dependency plan is plain: no internal IDs, links to SaveBell, audit logs or labels", async () => {
+  const { prText } = await import("../lib/fix");
+  const fix = { repo: "o/r", base_sha: "abc", files: [{ path: "package.json" }, { path: "package-lock.json" }], kind: "dependency",
+    plan: { package: "jsonwebtoken", installed: "8.5.1", target: "9.0.0", new_spec: "9.0.0", change: "major", plan_hash: "deadbeefcafe" },
+    runner: { tests: { executed: true, command: "npm test", exit_code: 0, summary: { total: 2, passed: 2 } } }, post_check: { outcome: "validated", installed_after: "9.0.0", known_vulns_after: { note: "" } } } as unknown as Fix;
+  const { title, body } = prText(fix, { id: "case-1", finding_id: "f", verdict: "Affected" } as never, { ids: ["GHSA-hjrf-2m68-5959"] } as never, "https://app.example");
+  assert.equal(title, "Upgrade jsonwebtoken from 8.5.1 to 9.0.0 to fix a security vulnerability");
+  for (const bad of [/deadbeefcafe/, /app\.example/, /Audit trail/, /Verdict/, /\bcase-1\b/, /abc\b/]) assert.doesNotMatch(body, bad);
+  assert.match(body, /major version upgrade/);
+  assert.match(body, /Prepared by SaveBell/);
 });
 
 test("raw errors become plain explanations", () => {

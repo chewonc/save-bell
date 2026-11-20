@@ -116,7 +116,7 @@ export function FixModal({ assessmentId: initialId, onClose }: { assessmentId: s
           onVerified={(id) => { changed.current = true; verifyDone.current = id; if (id !== assessmentId) setAssessmentId(id); else setReload((n) => n + 1); }}
           onFailed={(msg) => setDialog({ tone: "bad", title: "Verification failed", summary: "The check could not be completed, so nothing was recorded.", points: [msg], next: "Try again in a minute. The previous result is unchanged." })} /></div>}
         {ctx && visited.has("agent") && <div hidden={tab !== "agent"}><AskAgent id={ctx.assessment_id} connected={ctx.agent_connected} verified={ctx.verified} /></div>}
-        {ctx && visited.has("auto") && <div hidden={tab !== "auto"}><AutoTab c={ctx} onChange={() => { changed.current = true; }} goVerify={() => setTab("verify")} recheck={() => setReload((n) => n + 1)} onDone={setDialog} /></div>}
+        {ctx && visited.has("auto") && <div hidden={tab !== "auto"}><AutoTab c={ctx} onChange={() => { changed.current = true; }} goVerify={() => setTab("verify")} goAgent={() => { setTab("agent"); }} recheck={() => setReload((n) => n + 1)} onDone={setDialog} /></div>}
         {dialog && <ResultDialog info={dialog} onOk={() => setDialog(null)} />}
       </div>
       </div>
@@ -216,7 +216,7 @@ export function EvidenceList({ items }: { items: Evidence[] }) {
   );
 }
 
-function AutoTab({ c, onChange, goVerify, recheck, onDone }: { c: Ctx; onChange: () => void; goVerify: () => void; recheck: () => void; onDone: (info: ResultInfo) => void }) {
+function AutoTab({ c, onChange, goVerify, goAgent, recheck, onDone }: { c: Ctx; onChange: () => void; goVerify: () => void; goAgent: () => void; recheck: () => void; onDone: (info: ResultInfo) => void }) {
   // While a permission is missing, re-read it when the user comes back from GitHub (focus) and every few seconds, so
   // "Approve & Fix" returns by itself. The prepared patch and the chosen destination live in the fix record and in the
   // still-mounted Auto Fix panel, so nothing is lost.
@@ -244,6 +244,10 @@ function AutoTab({ c, onChange, goVerify, recheck, onDone }: { c: Ctx; onChange:
       )}
       {(c.can_act || pending || c.grant || c.fix) && <Remediation assessmentId={c.assessment_id} initial={c.fix} canAct={c.can_act} runnerEnabled={c.runner_enabled} defaultBranch={c.default_branch} repo={c.repo} mode={c.mode} onChange={onChange} onDone={onDone} permissionMissing={!!c.grant} plan={depPlan} />}
       {depPlan && c.plans && !c.plans.code.available && <p className="text-[calc(12px*var(--ui))] text-ink2">Code change without AI: {c.plans.code.reason}</p>}
+      <div className="flex flex-wrap items-center gap-2 text-[calc(13px*var(--ui))]">
+        <span className="text-ink2">Auto Fix uses fixed rules, not AI. To have your own AI make the change, use the AI Agent tab.</span>
+        <button type="button" className="btn-ghost" onClick={goAgent}>Use my AI</button>
+      </div>
       <HistoryView history={c.history ?? []} />
     </div>
   );

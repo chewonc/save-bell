@@ -212,6 +212,7 @@ export function Remediation({ assessmentId, initial, canAct, runnerEnabled, defa
         {status === "validated" && <PostCheckView fix={fix} />}
         <Checks items={needsCheck ? fixChecks(fix).map((c) => (c.text === "Not tested yet" ? { ...c, text: "Not checked in an isolated environment yet" } : c)) : fixChecks(fix)} />
         {writeFailed && <p role="alert" className="text-[calc(13px*var(--ui))] tone-bad">The last attempt to write didn&apos;t finish. If a branch named {branch} exists on GitHub, it was created by that attempt; nothing else was changed.</p>}
+        {!reviewed && dest !== "preview" && <p role="note" className="text-[calc(13px*var(--ui))] tone-warn"><b>Open &quot;Review changes&quot; below to enable approval.</b></p>}
         <details className="disclose" onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) setReviewed(true); }}>
           <summary>Review changes ({files.length} file{files.length === 1 ? "" : "s"})</summary>
           <div className="grid gap-3 mt-3">{files.map((x) => <div key={x.path} className="border hair rounded-[6px] overflow-hidden"><div className="mono text-[calc(12px*var(--ui))] px-3 py-2 border-b hair [overflow-wrap:anywhere]">{x.path}</div><Diff patch={x.patch} /></div>)}{fix.rejected_hunks.length > 0 && <RejectedHunks fix={fix} />}</div>
@@ -234,7 +235,6 @@ export function Remediation({ assessmentId, initial, canAct, runnerEnabled, defa
             </button>
           )}
           {status === "validated" && <button className="btn-ghost" disabled={!!busy} onClick={() => act("discard", () => call(`/api/fix/${fix.id}/cancel`))}>Discard</button>}
-          {!reviewed && dest !== "preview" && <span className="text-[calc(12px*var(--ui))] text-ink2">Open Review changes to enable approval.</span>}
         </div>
         <TechnicalDetails fix={fix} />
       </div>

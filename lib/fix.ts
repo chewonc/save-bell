@@ -167,38 +167,26 @@ export function prText(fix: Fix, a: Assessment, f: Finding | null, appUrl: strin
   if (fix.kind === "dependency" && fix.plan) return dependencyPrText(fix, a, f, appUrl);
   const ids = f?.ids.join(", ") || a.finding_id;
   const caseUrl = `${appUrl}/case/${a.id.split("/").map(encodeURIComponent).join("/")}`;
-  const as = fix.assessment;
-  const body = `## SaveBell: proposed fix for ${ids} (not verified)
+  // Same rule as dependencyPrText: plain words for any reader, no internal IDs, SaveBell links, labels or audit logs.
+  void caseUrl; void permalink;
+  const advisories = (f?.ids ?? []).map((id) => /^GHSA-/i.test(id) ? `[${id}](https://github.com/advisories/${id})` : id).join(", ") || ids;
+  const t = fix.runner?.tests;
+  const tests = t?.executed ? `\`${t.command}\` ${t.exit_code === 0 ? "passed" : "failed"}.` : "No tests were run for this change.";
+  const body = `## Summary
+This pull request proposes a code change for a known security vulnerability (${advisories}). It has **not been verified** that the change fixes the vulnerability.
 
-**Repository:** ${fix.repo} at \`${fix.base_sha}\` · **Verdict:** ${a.verdict} (${a.tier}) · **Case:** ${caseUrl}
-
-### What changes
-${fix.files.map((x) => x.hunks.length ? `- \`${x.path}\`: ${x.hunks.length} hunk(s): ${x.hunks.map((h) => h.rationale).join("; ")}` : `- \`${x.path}\`: edited by ${fix.agent === "muse-code" ? "Meta Muse Code" : "the drafting model"} (+${(x.patch.match(/^\+(?!\+\+)/gm) ?? []).length} / -${(x.patch.match(/^-(?!--)/gm) ?? []).length} lines)`).join("\n")}
-
-${fix.summary}
-
-### Static remediation assessment (SaveBell, no execution): **${as ? as.label.replace("_", " ") : "not assessed"}**
-${as?.summary ?? ""}
-${as ? as.coverage.filter((c) => c.driving).map((c) => `- ${c.condition_id}: ${c.before} → ${c.after ?? "unchanged"} [${c.tag}] ${c.text}`).join("\n") : ""}
-${as?.version_check ? `- Version check (computed): ${as.version_check.note}` : ""}
-${as?.risk_flags.length ? `\n**Risk flags:** ${as.risk_flags.join("; ")}` : ""}
-${as?.predicted_verdict ? `\nPredicted verdict after this change (static): **${as.predicted_verdict}**. ${as.predicted_reason}` : ""}
-
-### Evidence used
-${a.conditions.map((c) => `- ${c.state}${c.computed ? " (computed)" : ""}: ${c.text}${c.evidence[0] ? ` (${permalink(fix.repo, a.sha, c.evidence[0].file, c.evidence[0].line)}` : ""}`).join("\n")}
-
-### What was NOT verified
-- Syntax only: ${fix.syntax_check.map((s) => `${s.path} ${s.ok ? "parsed" : "FAILED"}`).join(", ") || "n/a"}. Not type-checked here, not executed, no tests were run by SaveBell.
-- Exploitability was never confirmed; the remediation is **not verified**. CI results on this pull request come from this repository and do not verify that the vulnerability is fixed.
-${as?.uncertain.length ? `- Still uncertain: ${as.uncertain.join("; ")}` : ""}
-${fix.caveats.length ? `- Caveats from the drafting model: ${fix.caveats.join("; ")}` : ""}
-
-### Verification required before merging
-${(as?.verification_required ?? ["Review the diff", "Run the existing test suite", "Deploy to a staging environment"]).map((v) => `- [ ] ${v}`).join("\n")}
+## What changed
+${fix.files.map((x) => `- \`${x.path}\`${x.hunks.length ? `: ${x.hunks.map((h) => h.rationale).join("; ")}` : ""}`).join("\n")}
+${fix.summary ? `\n${fix.summary}\n` : ""}
+## Before merging
+- Please review the change carefully and test it in your environment.
+${fix.caveats.length ? fix.caveats.map((c) => `- ${c}`).join("\n") + "\n" : ""}${fix.mode === "push" ? "- This pull request will be merged only after your repository's checks pass.\n" : ""}
+## Checks
+- Tests: ${tests} Tests confirm the project still works; they do not prove the vulnerability is fixed.
 
 ---
-Drafted by model \`${fix.model}\` from the remediation brief (${appUrl}/api/remediation/${a.id.split("/").map(encodeURIComponent).join("/")}). Advisory text is untrusted data and is not reproduced here. ${fix.mode === "push" ? "The user authorized push mode: SaveBell merges this pull request only after the repository's CI checks pass and branch protection allows it." : "Draft pull request for human review; do not merge without review."}`;
-  return { title: `SaveBell: proposed fix for ${ids} (not verified)`, body };
+<sub>Prepared by SaveBell with the repository owner's approval.</sub>`;
+  return { title: `Proposed fix for a security vulnerability (${ids}), not yet verified`, body };
 }
 
 /** PR text for an approved dependency plan: what changed and why, tests and the security re-check kept apart, and
@@ -207,36 +195,32 @@ function dependencyPrText(fix: Fix, a: Assessment, f: Finding | null, appUrl: st
   const p = fix.plan as { preventive?: boolean; package?: string; installed?: string; target?: string; new_spec?: string; change?: string; why_target?: string; risks?: string[]; unconfirmed_conditions?: string[]; known_vulns_at_target?: { note?: string }; plan_hash?: string };
   const pc = fix.post_check;
   const ids = f?.ids.join(", ") || a.finding_id;
-  const caseUrl = `${appUrl}/case/${a.id.split("/").map(encodeURIComponent).join("/")}`;
+  // Written for someone who has never heard of SaveBell: plain words, no internal IDs, links, audit logs or verdict labels.
+  void appUrl;
+  const advisories = (f?.ids ?? []).map((id) => /^GHSA-/i.test(id) ? `[${id}](https://github.com/advisories/${id})` : id).join(", ") || ids;
   const t = fix.runner?.tests;
-  const tests = t?.executed ? `\`${t.command}\` exited ${t.exit_code}${t.summary ? ` (${t.summary.passed}/${t.summary.total} passed)` : ""}` : "no test command was found, so no tests were run";
-  const title = `${p.preventive ? "[Preventive] " : ""}SaveBell: upgrade ${p.package} ${p.installed} → ${p.target} (${ids})`;
-  const body = `## ${p.preventive ? "Preventive dependency upgrade" : "Dependency upgrade"} for ${ids}
+  const tests = t?.executed
+    ? `\`${t.command}\` ${t.exit_code === 0 ? "passed" : "failed"}${t.summary ? ` (${t.summary.passed} of ${t.summary.total} tests)` : ""}.`
+    : "No test command was found, so no tests were run.";
+  const lock = fix.files.some((x) => /lock/i.test(x.path));
+  const title = p.preventive
+    ? `Upgrade ${p.package} from ${p.installed} to ${p.target} as a security precaution`
+    : `Upgrade ${p.package} from ${p.installed} to ${p.target} to fix a security vulnerability`;
+  const body = `## Summary
+This pull request upgrades \`${p.package}\` from ${p.installed} to ${p.target}. Version ${p.installed} is affected by a known security vulnerability (${advisories}); version ${p.target} is not.${p.preventive ? `\n\nThis is a precaution: it was not confirmed that this project uses the affected feature.` : ""}
 
-**Repository:** ${fix.repo} at \`${fix.base_sha}\` · **Case:** ${caseUrl}
-**Verdict before this change:** ${a.verdict === "Unclear" ? "Possible issue" : a.verdict}${p.preventive ? ". The vulnerable conditions were **not confirmed** in this code; this upgrade is a precaution and does not mean the project was affected." : ""}
+## What changed
+${fix.files.map((x) => /lock/i.test(x.path) ? `- \`${x.path}\`: regenerated for the new version.` : `- \`${x.path}\`: \`${p.package}\` set to \`${p.new_spec}\`.`).join("\n")}
+- No other code was changed.
 
-### What changes
-- \`${p.package}\` ${p.installed} → ${p.target} (${p.change} version change), declared as \`${p.new_spec}\`
-- Files: ${fix.files.map((x) => `\`${x.path}\``).join(", ")} (lockfile regenerated by the runner, install scripts disabled)
-- Made by a fixed rule in the repository's own GitHub Actions. **No AI was used.**
+## Before merging
+${p.change === "major" ? `- This is a major version upgrade and may include breaking changes. Please read the ${p.package} release notes.\n` : ""}${lock ? `- Packages that ${p.package} depends on may also change in the lockfile.\n` : ""}- Please review and test this change before merging.
 
-### Why this version
-${p.why_target ?? ""}
-${p.known_vulns_at_target?.note ? `- At planning time: ${p.known_vulns_at_target.note}.` : ""}
+## Checks
+- Tests: ${tests} Tests confirm the project still works; they do not prove the vulnerability is fixed.
+- Security: ${pc ? (pc.outcome === "validated" ? `version ${pc.installed_after ?? p.target} is outside the affected versions, and no other known vulnerability is listed for it.` : `not confirmed (${pc.known_vulns_after.note}).`) : "not checked."}
 
-### Compatibility risk
-${(p.risks ?? []).map((r) => `- ${r}`).join("\n")}
-
-### Tests (functional check only)
-- ${tests}. Passing tests do not show that the vulnerability is gone.
-
-### Security re-check after the change: **${pc ? pc.outcome.toUpperCase() : "not run"}**
-${pc ? `- Installed after the change: \`${pc.installed_after ?? "unknown"}\`; advisory: ${pc.advisory.replace(/_/g, " ")}
-- Other known vulnerabilities: ${pc.known_vulns_after.note}
-${pc.reasons.map((r) => `- ${r}`).join("\n")}` : ""}
-${p.unconfirmed_conditions?.length ? `\n### Still not confirmed\n${p.unconfirmed_conditions.map((c) => `- ${c}`).join("\n")}\n` : ""}
 ---
-Plan \`${p.plan_hash}\` was approved before the run and this exact diff was approved before this pull request. Draft pull request for human review; do not merge without review.`;
+<sub>Prepared by SaveBell with the repository owner's approval.</sub>`;
   return { title, body };
 }

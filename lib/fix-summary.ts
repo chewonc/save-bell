@@ -6,7 +6,7 @@ import type { Fix } from "./schema";
 export type Check = { tone: "ok" | "warn" | "bad"; text: string };
 
 /** Short facts shown under a ready or completed patch. */
-export function fixChecks(fix: Pick<Fix, "files" | "runner" | "agent" | "syntax_check" | "kind">): Check[] {
+export function fixChecks(fix: Pick<Fix, "files" | "runner" | "agent" | "syntax_check" | "kind"> & { post_check?: Fix["post_check"] }): Check[] {
   const out: Check[] = [];
   const n = fix.files.length;
   out.push({ tone: "ok", text: `${n} file${n === 1 ? "" : "s"} changed` });
@@ -18,7 +18,11 @@ export function fixChecks(fix: Pick<Fix, "files" | "runner" | "agent" | "syntax_
   } else if (fix.runner?.install && fix.runner.install.executed && fix.runner.install.exit_code !== 0) out.push({ tone: "bad", text: "Dependencies could not be installed" });
   else out.push({ tone: "warn", text: fix.kind && !fix.runner?.finished_at ? "Not run yet: tests run in your GitHub Actions after you approve" : fix.agent === "muse-code" || fix.agent === "runner" ? "No tests were found to run" : "Not tested yet" });
   if (fix.syntax_check?.some((c) => !c.ok)) out.push({ tone: "bad", text: "A changed file has a syntax error" });
-  out.push({ tone: "warn", text: "Security fix not yet verified" });
+  // Follows the security re-check so the summary never contradicts it (one source of truth for every fix).
+  const pc = fix.post_check?.outcome;
+  out.push(pc === "validated" ? { tone: "ok", text: "Security re-check passed" }
+    : pc === "failed" ? { tone: "bad", text: "Security re-check failed" }
+    : { tone: "warn", text: "Security fix not yet verified" });
   return out;
 }
 
