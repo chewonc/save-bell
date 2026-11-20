@@ -6,9 +6,11 @@ import { useState } from "react";
 // Rates checked 2026-11-20 (GitHub Docs, "Actions runner pricing"): Linux 2-core x64 $0.006/min; GitHub Free includes
 // 2,000 minutes a month for private repositories. Keep in sync with GitHub's pricing and with
 // .github/workflows/savebell-runner.yml (runs-on: ubuntu-latest, timeout-minutes: 30).
+// Wording rule: short, formal English; the key figure first, details folded away.
 const PRICE_PER_MIN = 0.006;
 const TIMEOUT_MIN = 30;
 const usd = (n: number) => `$${n.toFixed(2)}`;
+const USAGE_URL = "https://github.com/settings/billing/usage";
 
 // A question the user can paste into their own AI chat (free on a free plan). No repository name or code is included.
 const AI_QUESTION = `I use SaveBell, which runs a fix in my own GitHub Actions (ubuntu-latest Linux runner, ${TIMEOUT_MIN}-minute limit). ` +
@@ -18,16 +20,7 @@ const AI_QUESTION = `I use SaveBell, which runs a fix in my own GitHub Actions (
 type Usage = { available: true; used_minutes: number; included_minutes: number | null; plan: string | null; billed_usd: number } | { available: false; reason: string };
 type Estimate = { private: boolean; visibility: string; runs: number; minutes: number[]; usage: Usage | null } | { error: string };
 
-/** Whether the next run falls within the free minutes this month, and how many free minutes remain. */
-function FreeMinutes({ usage, perRun }: { usage: Usage | null; perRun: number }) {
-  if (!usage) return null;
-  if (!usage.available) return <p className="text-ink2">Remaining free minutes: not available. {usage.reason} You may check them in <a className="underline" href="https://github.com/settings/billing/usage" target="_blank" rel="noreferrer">GitHub billing usage ↗</a>.</p>;
-  const { used_minutes: used, included_minutes: inc } = usage;
-  if (inc === null) return <p>This month, {used.toLocaleString()} Actions minutes have been used{usage.billed_usd > 0 ? <>, of which {usd(usage.billed_usd)} has been billed</> : <> and nothing has been billed</>}. The included minutes for this account&apos;s plan could not be determined; please confirm them in <a className="underline" href="https://github.com/settings/billing/usage" target="_blank" rel="noreferrer">GitHub billing usage ↗</a>.</p>;
-  const left = Math.max(0, inc - used);
-  const free = left >= perRun;
-  return <p className={free ? "tone-ok" : "tone-warn"}><b>{free ? "The next run is within your free minutes." : "Your free minutes for this month are used up."}</b> This month: {used.toLocaleString()} of {inc.toLocaleString()} included minutes used, <b>{left.toLocaleString()} minutes remaining</b> (about {Math.floor(left / Math.max(1, perRun))} runs){usage.billed_usd > 0 ? <>; {usd(usage.billed_usd)} has been billed</> : null}. {free ? "" : "Further runs are charged only if your spending limit is above $0; otherwise they will not start."}</p>;
-}
+const Ext = ({ href, children }: { href: string; children: React.ReactNode }) => <a className="underline" href={href} target="_blank" rel="noreferrer">{children} ↗</a>;
 
 /** One tap: computes the cost from this repository's real SaveBell runs (no AI, free), plus links to ask the user's own AI. */
 export function CostCheck({ repo }: { repo: string }) {
@@ -41,13 +34,17 @@ export function CostCheck({ repo }: { repo: string }) {
   };
   const q = encodeURIComponent(AI_QUESTION);
   return (
-    <div className="grid gap-1">
-      <div className="flex flex-wrap gap-2 items-center">
-        <button type="button" className="btn w-fit" onClick={check} disabled={busy}>{busy ? "Calculating…" : "Estimate the cost for this repository"}</button>
-        <span className="text-ink2">This estimate is free of charge. It is calculated from the recorded durations of previous SaveBell runs in this repository; no AI is used.</span>
-      </div>
+    <div className="grid gap-2">
+      <button type="button" className="btn w-fit" onClick={check} disabled={busy}>{busy ? "Calculating…" : "Check my cost (free)"}</button>
       {est && <CostResult est={est} />}
-      <p className="text-ink2">AI charges depend on the model or agent you connect and cannot be calculated by SaveBell. You may ask your own AI assistant for an estimate; this incurs no charge on a free plan: <a className="underline" href={`https://claude.ai/new?q=${q}`} target="_blank" rel="noreferrer">Claude ↗</a> · <a className="underline" href={`https://chatgpt.com/?q=${q}`} target="_blank" rel="noreferrer">ChatGPT ↗</a>. The prepared question contains no repository name or source code. Please enter the name of your model before sending it.</p>
+      <details className="disclose">
+        <summary>How this is calculated</summary>
+        <ul className="list-disc pl-5 mt-1 grid gap-1">
+          <li>Figures are <b>estimates</b> from your past SaveBell runs and GitHub&apos;s published price. GitHub decides the actual charge. Please confirm in <Ext href={USAGE_URL}>GitHub billing usage</Ext>.</li>
+          <li>Privacy: only this month&apos;s Actions minute totals are read, when you select the button, with your own GitHub permission. Nothing is stored.</li>
+          <li>Own AI model connected? Ask your own AI for its cost (free on a free plan): <Ext href={`https://claude.ai/new?q=${q}`}>Claude</Ext> · <Ext href={`https://chatgpt.com/?q=${q}`}>ChatGPT</Ext>. The question contains no repository name or code.</li>
+        </ul>
+      </details>
     </div>
   );
 }
@@ -55,23 +52,28 @@ export function CostCheck({ repo }: { repo: string }) {
 function CostResult({ est }: { est: Estimate }) {
   if ("error" in est) return <p className="tone-warn">{est.error}</p>;
   const m = est.minutes;
-  const avg = m.length ? m.reduce((a, b) => a + b, 0) / m.length : 4;
-  const max = m.length ? Math.max(...m) : TIMEOUT_MIN;
-  const basis = m.length ? `average of your last ${m.length} SaveBell run${m.length > 1 ? "s" : ""}: ${avg.toFixed(1)} minutes (longest ${max})` : "no SaveBell run in this repository yet, so a typical 4 minutes is used";
-  if (!est.private) return <p className="tone-ok"><b>Estimated $0 per run.</b> This repository is {est.visibility}; GitHub does not charge for Actions on public repositories with standard runners. ({basis}) This is an estimate; please confirm your charges with GitHub.</p>;
-  return (<>
-    <FreeMinutes usage={est.usage} perRun={Math.ceil(avg)} />
-    <p><b>About {usd(Math.ceil(avg) * PRICE_PER_MIN)} per run</b> ({basis}), at most {usd(TIMEOUT_MIN * PRICE_PER_MIN)}. This repository is private: runs are <b>$0 while your plan&apos;s included minutes last</b> (GitHub Free: 2,000 a month, about {Math.floor(2000 / Math.max(1, Math.ceil(avg)))} runs like these), and charged only if you set a spending limit above $0. 100 runs a month: about {usd(100 * Math.ceil(avg) * PRICE_PER_MIN)}.</p>
-    <p className="text-ink2"><b>These figures are estimates, not a quotation.</b> Actual charges are determined by GitHub and may differ (for example, because of usage in other repositories or price changes). Please verify your usage and charges in <a className="underline" href="https://github.com/settings/billing/usage" target="_blank" rel="noreferrer">GitHub billing usage ↗</a> before approving a run; you remain responsible for any charges.</p>
-    <p className="text-ink2">Privacy: only this month&apos;s Actions minute totals of the paying account are read, at the time you select the button, with your own GitHub permission. SaveBell does not store them.</p>
-  </>);
+  const perRun = Math.ceil(m.length ? m.reduce((a, b) => a + b, 0) / m.length : 4);
+  const basis = m.length ? `based on your last ${m.length} run${m.length > 1 ? "s" : ""}` : "no past run yet, typical 4 minutes";
+  if (!est.private) return <p className="tone-ok"><b>Estimated $0 per run.</b> Public repositories are not charged.</p>;
+  const u = est.usage;
+  const left = u?.available && u.included_minutes !== null ? Math.max(0, u.included_minutes - u.used_minutes) : null;
+  return (
+    <ul className="grid gap-1">
+      <li><b>Per run: about {usd(perRun * PRICE_PER_MIN)}</b> ({perRun} min, {basis}). Maximum {usd(TIMEOUT_MIN * PRICE_PER_MIN)}.</li>
+      <li>{left === null
+        ? <>Free minutes left: <b>not available</b>. Please check <Ext href={USAGE_URL}>GitHub billing usage</Ext>.</>
+        : left >= perRun
+          ? <span className="tone-ok"><b>This run is free.</b> {left.toLocaleString()} free minutes left this month (about {Math.floor(left / perRun)} runs).</span>
+          : <span className="tone-warn"><b>Free minutes used up.</b> Runs are charged only if your spending limit is above $0.</span>}</li>
+    </ul>
+  );
 }
 
 export function ActionsCostNote({ compact = false, repo }: { compact?: boolean; repo?: string }) {
-  const billing = <a className="underline" href="https://github.com/settings/billing" target="_blank" rel="noreferrer">Settings → Billing and plans ↗</a>;
+  const billing = <Ext href="https://github.com/settings/billing">Billing settings</Ext>;
   if (compact) return (
-    <div role="note" className="grid gap-2 text-ink2">
-      <p><b>Possible cost, paid by you:</b> this run uses your GitHub account&apos;s Actions minutes, not SaveBell&apos;s. Estimate: usually 3–5 minutes; free within your plan&apos;s included minutes, otherwise about {usd(3 * PRICE_PER_MIN)}–{usd(5 * PRICE_PER_MIN)} (at most {usd(TIMEOUT_MIN * PRICE_PER_MIN)}, because a run stops after {TIMEOUT_MIN} minutes). No AI is used, so there is no AI cost. SaveBell charges nothing. Check your usage and spending limit in {billing}.</p>
+    <div role="note" className="grid gap-2 border hair rounded-[8px] px-3 py-3">
+      <p><b>Cost:</b> paid by your GitHub account, not SaveBell. About {usd(4 * PRICE_PER_MIN)} per run, or <b>$0</b> within your free minutes. No AI cost.</p>
       {repo && <CostCheck repo={repo} />}
     </div>
   );
@@ -79,22 +81,17 @@ export function ActionsCostNote({ compact = false, repo }: { compact?: boolean; 
     <details role="note" className="disclose" open>
       <summary>Costs you may pay (SaveBell charges nothing)</summary>
       <div className="grid gap-2 mt-2 text-ink2">
-        <p>Fix runs happen in your repository&apos;s GitHub Actions, so any charges go to <b>the account that owns the repository</b> (you or your organization), under your own GitHub and AI provider terms. SaveBell does not pay for them and does not bill you. The amounts below are <b>estimates</b> from published prices on 2026-11-20; your provider&apos;s current prices and your plan decide the real amount.</p>
+        <p>Charges go to <b>the account that owns the repository</b>. Amounts are estimates (prices as of 2026-11-20).</p>
         <table className="w-full text-left border-collapse">
-          <thead><tr><th className="pr-3 font-medium">What</th><th className="pr-3 font-medium">When it can cost money</th><th className="font-medium">Estimate per fix run</th></tr></thead>
+          <thead><tr><th className="pr-3 font-medium">What</th><th className="font-medium">Estimate per run</th></tr></thead>
           <tbody>
-            <tr><td className="pr-3 align-top">GitHub Actions, public repository</td><td className="pr-3 align-top">Never on standard GitHub-hosted runners</td><td className="align-top">$0</td></tr>
-            <tr><td className="pr-3 align-top">GitHub Actions, private repository</td><td className="pr-3 align-top">Only after your plan&apos;s included minutes are used up (GitHub Free: 2,000 minutes a month), and only if you set a spending limit above $0</td><td className="align-top">Usually 3–5 minutes: {usd(3 * PRICE_PER_MIN)}–{usd(5 * PRICE_PER_MIN)}. Most: {usd(TIMEOUT_MIN * PRICE_PER_MIN)} ({TIMEOUT_MIN}-minute limit). 100 runs a month: about {usd(100 * 4 * PRICE_PER_MIN)}</td></tr>
-            <tr><td className="pr-3 align-top">AI, default (rules)</td><td className="pr-3 align-top">Never: no AI is used</td><td className="align-top">$0</td></tr>
-            <tr><td className="pr-3 align-top">AI, your own model (optional)</td><td className="pr-3 align-top">Every run, billed by your AI provider</td><td className="align-top">Roughly $0.01–$0.50, depending on the model and how many files it reads. SaveBell cannot cap it</td></tr>
-            <tr><td className="pr-3 align-top">AI, your own coding agent (optional)</td><td className="pr-3 align-top">Every run, billed by your AI provider or counted against your subscription</td><td className="align-top">Roughly $0.50–$5, because agents make many model calls. Set a budget in the agent itself</td></tr>
+            <tr><td className="pr-3 align-top">Actions, public repository</td><td className="align-top">$0</td></tr>
+            <tr><td className="pr-3 align-top">Actions, private repository</td><td className="align-top">$0 within free minutes (Free plan: 2,000/month); otherwise about {usd(4 * PRICE_PER_MIN)}, max {usd(TIMEOUT_MIN * PRICE_PER_MIN)}</td></tr>
+            <tr><td className="pr-3 align-top">AI, default</td><td className="align-top">$0 (no AI used)</td></tr>
+            <tr><td className="pr-3 align-top">AI, your own model or agent</td><td className="align-top">About $0.01–$5, billed by your AI provider</td></tr>
           </tbody>
         </table>
-        <ul className="list-disc pl-5 grid gap-1">
-          <li><b>Runs start only when you approve a fix in SaveBell.</b> Nothing runs on a schedule or on every push. You can cancel a run at any time from SaveBell or the repository&apos;s Actions tab.</li>
-          <li><b>To avoid surprise charges:</b> keep GitHub&apos;s Actions spending limit at $0 (the default when no payment method is added); runs then stop instead of being billed. Set a usage limit with your AI provider before connecting a model or agent. Check {billing}.</li>
-          <li>Larger runners, macOS or Windows runners cost more; the SaveBell runner uses the standard Linux runner.</li>
-        </ul>
+        <p><b>To avoid surprise charges:</b> runs start only when you approve. Keep the Actions spending limit at $0 in {billing}, and set a limit with your AI provider.</p>
         {repo && <CostCheck repo={repo} />}
       </div>
     </details>

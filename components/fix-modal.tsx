@@ -97,6 +97,8 @@ export function FixModal({ assessmentId: initialId, onClose }: { assessmentId: s
   return (
     <dialog ref={ref} aria-labelledby={titleId} onClick={(e) => { if (e.target === ref.current) close(); }}
       className="modal m-auto w-[min(640px,calc(100vw-32px))] max-h-[min(86vh,820px)] overflow-hidden rounded-[12px] border hair bg-raised text-ink p-0 backdrop:bg-black/40">
+      {/* Column layout so the scrolling panel takes exactly the height left under the header and tabs (no hidden bottom). */}
+      <div className="flex flex-col max-h-[min(86vh,820px)]">
       <div className="flex items-center justify-between gap-3 px-4 sm:px-5 pt-4 pb-3 border-b hair">
         <h2 id={titleId} className="text-[calc(16px*var(--ui))] font-semibold">Fix security issue</h2>
         <button type="button" className="text-ink2 hover:text-ink text-[calc(22px*var(--ui))] leading-none w-10 h-10 -mr-2 grid place-items-center" aria-label="Close" onClick={close}>×</button>
@@ -107,7 +109,7 @@ export function FixModal({ assessmentId: initialId, onClose }: { assessmentId: s
             className={`px-2.5 sm:px-3 h-9 rounded-[6px] text-[calc(13px*var(--ui))] whitespace-nowrap ${tab === t.id ? "bg-[var(--line)] font-semibold" : "text-ink2 hover:text-ink"}`} onClick={() => setTab(t.id)}>{t.label}</button>
         ))}
       </div>
-      <div id={`${titleId}-panel`} role="tabpanel" aria-labelledby={tab ? `${titleId}-${tab}` : undefined} className="px-4 sm:px-5 py-4 overflow-auto max-h-[calc(min(86vh,820px)-110px)] grid gap-4">
+      <div id={`${titleId}-panel`} role="tabpanel" aria-labelledby={tab ? `${titleId}-${tab}` : undefined} className="px-4 sm:px-5 py-4 overflow-auto flex-1 min-h-0 grid gap-4 content-start">
         {err && <p role="alert" className="text-[calc(13px*var(--ui))] tone-bad">Could not load this finding: {err}</p>}
         {!ctx && !err && <p className="text-[calc(13px*var(--ui))] text-ink2" aria-live="polite">Loading…</p>}
         {ctx && visited.has("verify") && <div hidden={tab !== "verify"}><VerifyTab c={ctx}
@@ -116,6 +118,7 @@ export function FixModal({ assessmentId: initialId, onClose }: { assessmentId: s
         {ctx && visited.has("agent") && <div hidden={tab !== "agent"}><AskAgent id={ctx.assessment_id} connected={ctx.agent_connected} verified={ctx.verified} /></div>}
         {ctx && visited.has("auto") && <div hidden={tab !== "auto"}><AutoTab c={ctx} onChange={() => { changed.current = true; }} goVerify={() => setTab("verify")} recheck={() => setReload((n) => n + 1)} onDone={setDialog} /></div>}
         {dialog && <ResultDialog info={dialog} onOk={() => setDialog(null)} />}
+      </div>
       </div>
     </dialog>
   );
