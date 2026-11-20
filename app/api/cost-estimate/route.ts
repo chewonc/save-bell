@@ -43,7 +43,7 @@ async function monthUsage(gh: (p: string) => Promise<Response>, owner: { login: 
     const r = await gh(`${base}/settings/billing/usage?year=${d.getUTCFullYear()}&month=${d.getUTCMonth() + 1}`);
     // The status code is shown so the cause can be told apart (403/404: no Plan permission or not a billing manager).
     if (!r.ok) return { available: false, reason: r.status === 403 || r.status === 404
-      ? `permission denied (${r.status}). Sign in again and approve "Plan (read)". Self-hosted: set Account permissions → Plan: Read-only, not Repository permissions` +
+      ? `permission denied (${r.status}). Sign in again and approve "Plan (read)". Self-hosted: set Account permissions → Plan: Read-only` +
         (owner.type === "Organization" ? ". Organizations: billing managers only" : "")
       : `GitHub returned ${r.status} for billing usage` };
     const items = ((await r.json()) as { usageItems?: UsageItem[] }).usageItems ?? [];
