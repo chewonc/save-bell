@@ -5,6 +5,7 @@
 // (lib/write-auth.ts). The destination dropdown defaults to the saved Settings preference, applies to this attempt only,
 // and never writes by itself. Automatic merging is never offered as part of an approval.
 import { fixBranch } from "@/lib/fix-branch";
+import { PR_CLOSED_NOTE } from "@/lib/actions";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Fix } from "@/lib/schema";
 import { isStaleRun } from "@/lib/run-stale";
@@ -194,7 +195,7 @@ export function Remediation({ assessmentId, initial, canAct, runnerEnabled, defa
   if (status === "failed" || status === "validation_failed" || status === "cancelled" || stale) return (
     <div className="grid gap-3">
       <h3 className="text-[calc(15px*var(--ui))] font-semibold">{status === "cancelled" ? "Cancelled" : "Fix failed"}</h3>
-      <p className="text-[calc(13px*var(--ui))] text-ink2">{status === "cancelled" ? "The operation was stopped. Nothing was written to your repository." : stale ? friendlyError("stale") : friendlyError(fix.error)}</p>
+      <p className="text-[calc(13px*var(--ui))] text-ink2">{status === "cancelled" ? (fix.error === PR_CLOSED_NOTE ? PR_CLOSED_NOTE : "The operation was stopped. Nothing was written to your repository.") : stale ? friendlyError("stale") : friendlyError(fix.error)}</p>
       {errLine}
       <button className="btn w-fit" disabled={!!busy || !canAct} onClick={() => prepare(true)}>{busy === "prepare" ? "Starting…" : "Start over"}</button>
       <TechnicalDetails fix={fix} />

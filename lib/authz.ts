@@ -11,7 +11,13 @@ import { SYSTEM_USER, store } from "./store";
 
 /** The caller's own fix records for an assessment. Other users watching the same repository never see them. */
 export async function fixesFor(uid: string, assessmentId: string): Promise<Fix[]> {
-  return (await store.listFixes(assessmentId)).filter((f) => f.user_id === uid);
+  const own = (await store.listFixes(assessmentId)).filter((f) => f.user_id === uid);
+  // A pull request closed or merged on GitHub updates the fix here, so every view (list, case page, Fix window, bulk) agrees.
+  if (!own.some((f) => f.pr_number && (f.status === "pr_created" || f.status === "blocked_by_protection"))) return own;
+  try {
+    const token = await (await import("./session")).githubUserToken();
+    return await (await import("./pr-state")).refreshPrStates(own, token);
+  } catch { return own; } // no browser session (MCP, scheduled jobs): keep the stored status
 }
 
 /** A fix the caller owns, or null (callers answer 404 so ids cannot be probed). */

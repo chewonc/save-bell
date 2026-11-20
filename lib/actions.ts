@@ -10,6 +10,8 @@ import { isVerified, location } from "./labels";
 import { UNFIXABLE } from "./fixgate";
 import type { Assessment, Fix } from "./schema";
 import { isStaleRun } from "./run-stale";
+/** Set by lib/pr-state.ts when the fix's pull request was closed on GitHub without merging. */
+export const PR_CLOSED_NOTE = "The pull request was closed without merging. Nothing was merged; you can fix it again.";
 import { needsWrite, type RemediationMode } from "./remediation-mode";
 
 export type ActionKind = "fix_now" | "retry" | "approve" | "verify" | "review_fix" | "view_pr" | "view_fix" | "view_progress";
@@ -72,7 +74,7 @@ export function findingAction(a: Assessment, fixes: Fix[], ctx: ActionContext, c
   const stalledRun = !!fx && isStaleRun(fx, now);
   const failed = fx && (fx.status === "failed" || fx.status === "validation_failed" || stalledRun);
   const cancelled = fx?.status === "cancelled";
-  const failNote = cancelled ? "You cancelled the last attempt; nothing was written to your repository." : stalledRun ? `The runner never reported back${fx?.runner?.run_url ? ` (${fx.runner.run_url})` : ""}; nothing was written. You can start it again.` : fx?.error ?? null;
+  const failNote = cancelled && fx?.error === PR_CLOSED_NOTE ? PR_CLOSED_NOTE : cancelled ? "You cancelled the last attempt; nothing was written to your repository." : stalledRun ? `The runner never reported back${fx?.runner?.run_url ? ` (${fx.runner.run_url})` : ""}; nothing was written. You can start it again.` : fx?.error ?? null;
   if (blocker) return { primary: { kind: "review_fix", href: fx ? fixHref : `${caseHref}#how-to-fix`, external: false }, state: failed ? { key: stalledRun ? "stalled" : "failed", tone: "bad" } : cancelled ? { key: "cancelled", tone: "muted" } : null, note: (failed || cancelled) && failNote ? `${failNote} ${blocker}` : blocker };
   if (failed) return { primary: { kind: "retry", href: `${caseHref}?act=1#fix`, external: false }, state: { key: stalledRun ? "stalled" : "failed", tone: "bad" }, note: failNote };
   return { primary: { kind: "fix_now", href: `${caseHref}?act=1#fix`, external: false }, state: cancelled ? { key: "cancelled", tone: "muted" } : fx?.status === "drafted" ? { key: "awaiting", tone: "muted" } : null, note: cancelled ? failNote : null };
