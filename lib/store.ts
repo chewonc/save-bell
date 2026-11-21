@@ -12,7 +12,7 @@ type KV = {
   lpush(k: string, v: unknown): Promise<void>;
   lrange<T>(k: string, start: number, stop: number): Promise<T[]>;
   ltrim(k: string, start: number, stop: number): Promise<void>;
-  setnx(k: string, v: unknown): Promise<boolean>;
+  setnx(k: string, v: unknown, ttlSec?: number): Promise<boolean>;
   incr(k: string): Promise<number>;
   srem(k: string, ...m: string[]): Promise<void>;
   scard(k: string): Promise<number>;
@@ -73,7 +73,7 @@ function redisKV(): KV {
     lpush: async (k, v) => { await r.lpush(k, v); },
     lrange: (k, a, b) => r.lrange(k, a, b),
     ltrim: async (k, a, b) => { await r.ltrim(k, a, b); },
-    setnx: async (k, v) => (await r.setnx(k, v)) === 1,
+    setnx: async (k, v, ttlSec) => ttlSec ? (await r.set(k, v, { nx: true, ex: ttlSec })) === "OK" : (await r.setnx(k, v)) === 1,
     incr: (k) => r.incr(k),
     srem: async (k, ...m) => { if (m.length) await r.srem(k, m[0], ...m.slice(1)); },
     scard: (k) => r.scard(k),
@@ -82,6 +82,8 @@ function redisKV(): KV {
   };
 }
 
+/** Expiry for single-use approval and start records (claim:grant/write/approve/run): far beyond the longest grant (45 min). */
+export const APPROVAL_CLAIM_TTL_S = 7 * 24 * 3600;
 export const kv: KV = hasRedis() ? redisKV() : memKV;
 export const storageMode = hasRedis() ? "upstash-redis" : "local file (.data/store.json, dev only)";
 
@@ -341,8 +343,9 @@ export const store = {
   setAccessChecked: (uid: string, at: string) => kv.set(`access_checked:${uid}`, at),
 
   // ---- write authorization (lib/write-auth.ts) ----
-  /** Atomic single-use claim (KV SETNX): true for the first caller only. */
-  claim: (k: string) => kv.setnx(`claim:${k}`, new Date().toISOString()),
+  /** Atomic single-use claim (KV SETNX). `ttlSec` lets the record expire once what it guards has expired anyway
+   *  (approval grants live at most 45 minutes); without it the record is kept for ever. */
+  claim: (k: string, ttlSec?: number) => kv.setnx(`claim:${k}`, new Date().toISOString(), ttlSec),
   /** When the user last cancelled this fix; any grant issued before it is void. */
   setCancelledAt: (fixId: string, at: string) => kv.set(`cancelled_at:${fixId}`, at),
   cancelledAt: (fixId: string) => kv.get<string>(`cancelled_at:${fixId}`),

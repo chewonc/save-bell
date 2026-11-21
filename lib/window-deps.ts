@@ -16,7 +16,7 @@ import { approveValidated, runnerSetup, startRun } from "./runner";
 import type { Assessment, Notification } from "./schema";
 import { deriveSeverity } from "./severity";
 import { isSystemRepo } from "./session";
-import { ALERT_HISTORY, store } from "./store";
+import { ALERT_HISTORY, store, APPROVAL_CLAIM_TTL_S } from "./store";
 import { Precondition, type Candidate, type Deps, type WindowRun } from "./window-run";
 
 const ACTOR = "automatic fix run";
@@ -95,7 +95,7 @@ export const windowDeps = (): Deps => ({
     // The runner lives in the user's own GitHub Actions: without the caller workflow nothing would run.
     const setup = await runnerSetup(fix.repo, w?.default_branch ?? "main");
     if (!setup.installed) throw new Error(`the SaveBell runner workflow is not set up in ${fix.repo} (${setup.path})`);
-    if (!(await store.claim(`run:${fix.id}:${fix.events.length}:${fix.status}`))) throw new Error("this fix is already starting");
+    if (!(await store.claim(`run:${fix.id}:${fix.events.length}:${fix.status}`, APPROVAL_CLAIM_TTL_S))) throw new Error("this fix is already starting");
     // Preview mode: the runner reads the repository in the user's Actions and the patch waits for the user's approval. No repository write is authorized.
     await startRun({ ...fix, window_run_id: runId }, a, "preview", ACTOR, inst);
   },

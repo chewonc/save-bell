@@ -29,7 +29,7 @@ import type { Assessment, Finding, Fix } from "./schema";
 import { checkGrant, checkLockfileScope, checkManifestScope, grantDigest } from "./exec-grant";
 import { postFixCheck } from "./post-check";
 import { historyEntry } from "./verdict-history";
-import { store } from "./store";
+import { store, APPROVAL_CLAIM_TTL_S } from "./store";
 import { cancellable, cancelRun, checkApprovable, patchVersion } from "./remediation-control";
 import { assertWrite, recordApproval, revoke, WriteAuthError } from "./write-auth";
 import { USER_AGENT } from "./ua";
@@ -104,7 +104,7 @@ export async function briefFor(fix: Fix, a: Assessment, f: Finding | null, runUr
   // The grant is checked again and consumed here: one approval, one run. The executor comes from the grant only.
   const grant = checkGrant(fix);
   // Atomic: of two simultaneous brief requests for the same approval, exactly one gets it (store.claim is SETNX).
-  if (!(await store.claim(`grant:${grant.id}`))) throw new RunnerError("this approval was already used; approve the plan again to run it again", 409);
+  if (!(await store.claim(`grant:${grant.id}`, APPROVAL_CLAIM_TTL_S))) throw new RunnerError("this approval was already used; approve the plan again to run it again", 409);
   fix = { ...fix, exec_grant: { ...grant, consumed_at: now() } };
   // A per-fix MCP token (read-only tools) so a coding agent in the runner can look up the cited evidence; revoked on result.
   const mcpToken = await createAgentToken(fix.user_id, `fix runner ${fix.id.slice(0, 8)}`);

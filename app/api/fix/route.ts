@@ -8,7 +8,7 @@ import { env } from "@/lib/env";
 import { draftPlannedFix } from "@/lib/fix-plan-draft";
 import { plansForAssessment } from "@/lib/fix-plan-server";
 import { canSee, currentUser } from "@/lib/session";
-import { store } from "@/lib/store";
+import { store, APPROVAL_CLAIM_TTL_S } from "@/lib/store";
 import { autoFixPermission } from "@/lib/fix-permissions";
 import { modeOf } from "@/lib/remediation-mode";
 import { githubUserToken } from "@/lib/session";
@@ -41,7 +41,7 @@ export async function POST(req: Request) {
   const pending = existing.find((x) => x.status === "drafted" && x.exec_grant && !x.exec_grant.consumed_at && x.exec_grant.plan_hash === dep.plan_hash && Date.parse(x.exec_grant.expires_at) > Date.now());
   if (pending) return Response.json({ fix: pending, plans, reused: true });
   // Two simultaneous approvals of the same plan: only one creates a fix (atomic SETNX on the current attempt count).
-  if (!(await store.claim(`approve:${a.id}:${dep.plan_hash}:${existing.length}`))) return Response.json({ error: "this plan is already being approved", plans }, { status: 409 });
+  if (!(await store.claim(`approve:${a.id}:${dep.plan_hash}:${existing.length}`, APPROVAL_CLAIM_TTL_S))) return Response.json({ error: "this plan is already being approved", plans }, { status: 409 });
   try {
     const fix = await draftPlannedFix(a, dep, user.id, { majorConfirmed: !!confirm_major });
     return Response.json({ fix, plans });

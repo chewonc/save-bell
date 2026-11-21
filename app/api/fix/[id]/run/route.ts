@@ -8,7 +8,7 @@ import { autoFixPermission } from "@/lib/fix-permissions";
 import { destinationOf, modeOf, needsWrite, type RemediationMode } from "@/lib/remediation-mode";
 import { allowedFilesFor, detectTestCommand, RunnerError, runnerSetup, startRun, type RunnerSetup } from "@/lib/runner";
 import { currentUser, githubUserToken, isSystemRepo } from "@/lib/session";
-import { store } from "@/lib/store";
+import { store, APPROVAL_CLAIM_TTL_S } from "@/lib/store";
 
 export const maxDuration = 60;
 
@@ -75,7 +75,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (blockers.length || !inst) throw new RunnerError(blockers[0] ?? "no installation", 403);
     // The runner never writes; the stored mode only records the destination the user saw when starting it.
     // One run per attempt state: a double click or two tabs cannot dispatch two runners for the same fix.
-    if (!(await store.claim(`run:${fix.id}:${fix.events.length}:${fix.status}`))) throw new RunnerError("this fix is already starting", 409);
+    if (!(await store.claim(`run:${fix.id}:${fix.events.length}:${fix.status}`, APPROVAL_CLAIM_TTL_S))) throw new RunnerError("this fix is already starting", 409);
     const out = await startRun(fix, a, mode === "branch" ? "branch" : mode === "preview" ? "preview" : "pr", user.login, inst);
     return Response.json({ fix: out });
   } catch (e) { return fail(e); }
