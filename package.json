@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx tests/run.mjs"
+    "test": "node --conditions=import --import tsx tests/run.mjs"
   },
   "dependencies": {
     "@octokit/app": "^16.1.4",
