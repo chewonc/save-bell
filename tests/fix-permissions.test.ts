@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { checkAppPermissions, checkUserPush, decidePermission, neededFor } from "../lib/fix-permissions";
+import { checkAppPermissions, checkUserPush, decidePermission, neededFor, splitMissing } from "../lib/fix-permissions";
 
 const ALL = { actions: "write", contents: "write", pull_requests: "write", metadata: "read" };
 
@@ -80,4 +80,13 @@ test("the Fix button follows the same decision: a failed permission blocks it in
     assert.doesNotMatch(s, /p\.contents === "write" && p\.pull_requests === "write"/, p);
     assert.match(s, /permission: perm|permission: permBy/, p);
   }
+});
+
+test("missing App permissions are split into pending approval vs not requested by the App", () => {
+  const miss = ["Actions: write", "Contents: write"];
+  assert.deepEqual(splitMissing(miss, { actions: "write", contents: "write" }), { pending: miss, undeclared: [] });
+  assert.deepEqual(splitMissing(miss, { contents: "write" }), { pending: ["Contents: write"], undeclared: ["Actions: write"] });
+  assert.deepEqual(splitMissing(miss, { actions: "read", contents: "write" }), { pending: ["Contents: write"], undeclared: ["Actions: write"] });
+  // App settings unreadable: never claim it is SaveBell's fault; keep the approval guidance.
+  assert.deepEqual(splitMissing(miss, null), { pending: miss, undeclared: [] });
 });

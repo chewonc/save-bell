@@ -112,6 +112,12 @@ export function explainGitHubError(e: unknown, account: string): string {
 /** Which permissions this installation currently has (after the owner accepted an upgrade, write perms appear here). */
 export { installationCanWrite } from "./pull-state";
 
+/** The permissions the App itself asks for (its settings page). An installation can only accept what is listed here. */
+export async function appDeclaredPermissions(): Promise<Record<string, string>> {
+  const r = await githubApp().octokit.request("GET /app");
+  return ((r.data as { permissions?: Record<string, string> } | null)?.permissions ?? {}) as Record<string, string>;
+}
+
 export async function installationPermissions(installationId: number): Promise<Record<string, string>> {
   const r = await githubApp().octokit.request("GET /app/installations/{installation_id}", { installation_id: installationId });
   return (r.data.permissions ?? {}) as Record<string, string>;

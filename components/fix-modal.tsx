@@ -27,7 +27,7 @@ type Ctx = {
   plans: FixPlans | null; history: VerdictHistoryEntry[];
   not_affected_because?: { text: string; why: string; basis: string | null }[];
   mode: RemediationMode; after_fix: string; agent_connected: boolean;
-  grant: { kind: "install" | "accept" | "allow_changes" | "user_missing" | "user_unknown"; url: string | null; missing?: string[]; unknown?: boolean; signin?: boolean } | null; repo_key: string;
+  grant: { kind: "install" | "accept" | "allow_changes" | "user_missing" | "user_unknown"; url: string | null; missing?: string[]; undeclared?: string[]; unknown?: boolean; signin?: boolean } | null; repo_key: string;
 };
 type Tab = "verify" | "agent" | "auto";
 export type Evidence = { text: string; state: string; computed?: boolean; basis?: string | null; refs: { file: string; line: number | null; quote: string; url: string | null }[] };
@@ -266,18 +266,22 @@ function GrantPermission({ c, recheck }: { c: Ctx; recheck: () => void }) {
   const g = c.grant!;
   // Missing (GitHub confirmed it is absent) and unconfirmed (GitHub could not be asked) are told apart; both block.
   const WHY: Record<string, string> = { "Actions: write": "starts the fix run in your own GitHub Actions", "Contents: write": "creates the branch with the change you approve", "Pull requests: write": "opens the draft pull request" };
-  const title = g.kind === "user_missing" ? "Your GitHub account can't change this repository."
+  // The App itself does not ask for a permission: nothing the user approves on GitHub can grant it.
+  const setup = g.kind === "accept" && !g.unknown && (g.undeclared?.length ?? 0) > 0;
+  const title = setup ? "SaveBell's setup is missing a permission. There is nothing you need to approve."
+    : g.kind === "user_missing" ? "Your GitHub account can't change this repository."
     : g.kind === "user_unknown" && g.signin ? "Your GitHub sign-in has expired."
     : g.kind === "user_unknown" ? "SaveBell couldn't confirm your access to this repository."
     : g.kind === "accept" && g.unknown ? "SaveBell couldn't confirm its GitHub App permissions for this repository."
     : g.kind === "accept" ? "SaveBell's GitHub App is missing a permission for this repository."
     : "SaveBell doesn't have permission to change this repository.";
-  const how = g.kind === "install" ? "Install the SaveBell GitHub App on this repository. GitHub asks you to choose the repositories and confirm."
+  const how = setup ? `SaveBell's GitHub App does not request ${g.undeclared!.join(", ")}, so GitHub has nothing to show you for approval. This must be fixed in SaveBell's own App settings; Auto Fix stays off until then.`
+    : g.kind === "install" ? "Install the SaveBell GitHub App on this repository. GitHub asks you to choose the repositories and confirm."
     : g.kind === "user_missing" ? "SaveBell runs and writes fixes only for people with write access to the repository. Ask a maintainer for write access, or ask a maintainer to run this fix."
     : g.kind === "user_unknown" && g.signin ? "Please sign in again so GitHub can confirm your access. You will return to this page."
     : g.kind === "user_unknown" ? "Auto Fix stays off until GitHub confirms your write access. Please try again."
     : g.kind === "accept" && g.unknown ? "Auto Fix stays off until the permissions are confirmed. Check that the SaveBell App is installed on this repository with Actions, Contents and Pull requests set to Read and write, then try again."
-    : g.kind === "accept" ? `Approve these on GitHub: ${(g.missing ?? []).map((m) => `${m} (${WHY[m] ?? "needed for Auto Fix"})`).join("; ")}. Nothing is changed in your code by approving.`
+    : g.kind === "accept" ? `SaveBell needs ${(g.missing ?? []).map((m) => `${m} (${WHY[m] ?? "needed for Auto Fix"})`).join("; ")}. On the GitHub page that opens, find the notice at the top saying SaveBell is requesting updated permissions, click "Review request", then "Accept new permissions". The "Save" button lower on that page is for repository selection and does not grant permissions. Approving changes nothing in your code.`
     : "Changes are turned off for this repository in SaveBell. Turning them on writes nothing to GitHub; each change still needs your approval.";
   const allow = async () => {
     setBusy(true); setErr(null);
@@ -288,7 +292,8 @@ function GrantPermission({ c, recheck }: { c: Ctx; recheck: () => void }) {
     <div role="note" className="text-[calc(13px*var(--ui))] grid gap-2 border hair rounded-[8px] px-3 py-3">
       <p className="tone-bad font-medium">{title}</p>
       <p className="text-ink2">{how}</p>
-      {(g.kind === "user_missing" || g.kind === "user_unknown") ? (
+      {setup ? <div><button type="button" className="btn-ghost" onClick={recheck}>Try again</button></div>
+      : (g.kind === "user_missing" || g.kind === "user_unknown") ? (
         // GitHub sign-in tokens expire after 8 hours; signing in again is the fix, so offer it directly.
         g.kind === "user_unknown" && <div>{g.signin
           ? <button type="button" className="btn" disabled={busy} onClick={() => { setBusy(true); void signInWithGitHub(window.location.pathname + window.location.search); }}>{busy ? "Opening GitHub…" : "Sign in with GitHub"}</button>
@@ -299,7 +304,7 @@ function GrantPermission({ c, recheck }: { c: Ctx; recheck: () => void }) {
           : <a className="btn no-underline" href={g.url ?? "#"} target="_blank" rel="noreferrer" onClick={() => setOpened(true)}>Grant Permission <span aria-hidden>↗</span></a>}
         {g.kind !== "allow_changes" && (opened || g.unknown) && <button type="button" className="btn-ghost" onClick={recheck}>{g.unknown ? "Try again" : "I've approved it"}</button>}
       </div>}
-      {(g.kind === "install" || g.kind === "accept") && <p className="text-[calc(12px*var(--ui))] text-ink2">{opened ? "Waiting for GitHub. This updates by itself when you come back to this tab." : "Opens GitHub in a new tab. Come back here afterwards; your prepared fix stays as it is."}</p>}
+      {!setup && (g.kind === "install" || g.kind === "accept") && <p className="text-[calc(12px*var(--ui))] text-ink2">{opened ? "Waiting for GitHub. This updates by itself when you come back to this tab." : "Opens GitHub in a new tab. Come back here afterwards; your prepared fix stays as it is."}</p>}
       {err && <p role="alert" className="tone-bad">{err}</p>}
     </div>
   );

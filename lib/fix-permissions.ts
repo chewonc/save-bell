@@ -33,6 +33,18 @@ export async function checkAppPermissions(inst: number | null, needed: PermName[
   return missing.length ? { status: "missing", missing } : { status: "granted" };
 }
 
+/**
+ * Split missing App permissions by who can fix them. "pending": the App asks for write, so the installation owner only
+ * has to accept the update on GitHub. "undeclared": the App itself does not ask for it, so nothing the user approves can
+ * grant it (SaveBell's own setup must change). If the App's declared set is unknown, everything is treated as pending.
+ */
+export function splitMissing(missing: string[], declared: Record<string, string> | null): { pending: string[]; undeclared: string[] } {
+  if (!declared) return { pending: missing, undeclared: [] };
+  const key = (label: string) => (Object.keys(LABEL) as PermName[]).find((n) => LABEL[n] === label);
+  const undeclared = missing.filter((m) => { const k = key(m); return !!k && declared[k] !== "write"; });
+  return { pending: missing.filter((m) => !undeclared.includes(m)), undeclared };
+}
+
 /** The user's own push permission: missing when GitHub says no (or hides the repository), unknown when it cannot be asked. */
 export async function checkUserPush(token: string | null, repoFull: string, get: (t: string, full: string) => Promise<{ push: boolean } | null>): Promise<PermCheck> {
   if (!token) return { status: "unknown", reason: "sign in with GitHub again so SaveBell can confirm your access to this repository" };
