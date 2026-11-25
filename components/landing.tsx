@@ -22,7 +22,7 @@ export function Landing({ signin, next, authReady, signedIn = false, d, monitor 
           <p className="text-[calc(17px*var(--ui))] leading-relaxed text-ink2 max-w-[calc(520px*var(--ui))]">{d.landing_sub}</p>
           {signin && <p className="text-[calc(14px*var(--ui))] tone-warn">{d.signin_continue}{next ? ` → ${next}` : ""}.</p>}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            {signedIn ? <Link href="/alerts" className="btn btn-primary">{d.open_your_alerts}</Link> : authReady ? <SignInButton next={next ?? "/alerts"} label={d.sign_in} /> : <span className="text-[calc(13px*var(--ui))] text-ink2">{d.signin_unconfigured}</span>}
+            {signedIn && !signin ? <Link href="/alerts" className="btn btn-primary">{d.open_your_alerts}</Link> : authReady ? <SignInButton next={next ?? "/alerts"} label={d.sign_in} /> : <span className="text-[calc(13px*var(--ui))] text-ink2">{d.signin_unconfigured}</span>}
             <Link href="/demo" className="text-[calc(14px*var(--ui))]">{d.see_demo}</Link>
             <span className="text-[calc(13px*var(--ui))] text-ink2">{d.read_only_note}</span>
           </div>

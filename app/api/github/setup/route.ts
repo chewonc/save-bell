@@ -20,8 +20,17 @@ export async function GET(req: Request) {
   // GitHub does not forward `state` for installations started from github.com itself; require it only when we set one.
   if (expected && state && state !== expected) return new Response("state mismatch", { status: 400 });
   const token = await githubUserToken();
-  if (!token) return NextResponse.redirect(new URL("/repos?error=no_token", url.origin));
-  const mine = await listUserInstallations(token);
+  // After a sign-in expired or was revoked, GitHub rejects the token (401): sign in again and come back to this same
+  // step, so the installation is still connected. Never a raw 500.
+  const again = NextResponse.redirect(new URL(`/?signin=1&next=${encodeURIComponent(url.pathname + url.search)}`, url.origin));
+  if (!token) return again;
+  let mine: Awaited<ReturnType<typeof listUserInstallations>>;
+  try { mine = await listUserInstallations(token); }
+  catch (e) {
+    if ((e as { status?: number }).status === 401) return again;
+    await store.log({ kind: "auth", source: "github-app", detail: `setup: GitHub did not list installations for ${user.login} (${String((e as Error).message ?? e).slice(0, 80)})` });
+    return NextResponse.redirect(new URL("/repos?error=github_unavailable", url.origin));
+  }
   const found = mine.find((i) => i.id === instId);
   if (!Number.isFinite(instId) || !found) {
     await store.log({ kind: "auth", source: "github-app", detail: `setup: installation ${instId} not visible to ${user.login}; ignored` });
