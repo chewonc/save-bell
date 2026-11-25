@@ -30,7 +30,9 @@ async function installationFor(repo: string): Promise<number | null> {
     for (const w of await store.listRepos()) if (w.installation_id) map.set(w.repo, w.installation_id);
     repoInstMemo = { at: Date.now(), map };
   }
-  return repoInstMemo.map.get(repo) ?? pendingInst.get(repo) ?? null;
+  // A repository being (re)connected uses the installation it is being connected through, not a stored one that may
+  // have been deleted (reinstalling the App gives a new installation id).
+  return pendingInst.get(repo) ?? repoInstMemo.map.get(repo) ?? null;
 }
 export const forgetInstallations = () => { repoInstMemo = null; };
 /** Repositories being connected are not stored yet: remember their installation so their first reads use it. */
