@@ -19,16 +19,27 @@ export async function revalidateAccess(uid: string, userToken: string | null, no
   const insts = new Set((await gh.listUserInstallations(userToken)).map((i) => i.id));
   const lost: string[] = [], restored: string[] = [];
   const reposByInst = new Map<number, Set<string>>();
+  const reposOf = async (id: number) => {
+    if (!reposByInst.has(id)) reposByInst.set(id, new Set((await gh!.listUserInstallationRepos(userToken, id)).map((r) => r.full_name)));
+    return reposByInst.get(id)!;
+  };
+  // Installations this user connected to SaveBell and GitHub still shows them: where a moved link may be re-pointed.
+  const connected = ((await store.listUserInstallations(uid)) as Installation[]).map((i) => i.id).filter((id) => insts.has(id));
   for (const link of await store.listUserRepos(uid)) {
+    const full = link.repo_key.split("/").slice(0, 2).join("/");
     let ok = true;
+    let moved: number | null = null;
     if (link.installation_id) {
-      if (!insts.has(link.installation_id)) ok = false;
-      else {
-        if (!reposByInst.has(link.installation_id)) reposByInst.set(link.installation_id, new Set((await gh.listUserInstallationRepos(userToken, link.installation_id)).map((r) => r.full_name)));
-        ok = reposByInst.get(link.installation_id)!.has(link.repo_key.split("/").slice(0, 2).join("/"));
-      }
+      ok = insts.has(link.installation_id) && (await reposOf(link.installation_id)).has(full);
+      // Reinstalling the App gives a new installation id: find the repository in another connected installation.
+      if (!ok) for (const id of connected) if (id !== link.installation_id && (await reposOf(id)).has(full)) { moved = id; ok = true; break; }
     }
-    if (!ok !== !!link.access_lost) {
+    if (moved != null) {
+      await store.addUserRepo({ ...link, installation_id: moved, access_lost: false });
+      const w = await store.getRepo(link.repo_key);
+      if (w && w.installation_id !== moved && !insts.has(w.installation_id ?? -1)) await store.putRepo({ ...w, installation_id: moved });
+      if (link.access_lost) restored.push(link.repo_key);
+    } else if (!ok !== !!link.access_lost) {
       await store.addUserRepo({ ...link, access_lost: !ok });
       (ok ? restored : lost).push(link.repo_key);
     }

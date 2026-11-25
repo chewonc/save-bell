@@ -3,9 +3,8 @@
 // GitHub App. A patch_version that does not match the stored patch is refused (the user must review the current one).
 // The destination is the user's saved preference (lib/remediation-mode.ts): "preview" refuses every write, "branch" pushes a
 // branch without a PR, "pr" opens a draft PR ("push" = PR merged after CI, a separate per-fix opt-in). Never escalated.
-import { assertUserCanWrite } from "@/lib/access";
 import { env, hasGitHubApp } from "@/lib/env";
-import { installationPermissions } from "@/lib/github-app";
+import { autoFixPermission } from "@/lib/fix-permissions";
 import { writeModeFor } from "@/lib/remediation-mode";
 import { approveValidated, RunnerError } from "@/lib/runner";
 import { currentUser, githubUserToken, isSystemRepo } from "@/lib/session";
@@ -32,10 +31,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const w = await store.getRepo(fix.repo_key);
     const inst = w?.installation_id ?? ur.installation_id;
     if (!hasGitHubApp() || !inst) throw new RunnerError("this repository is not connected through the GitHub App installation", 403);
-    const p = await installationPermissions(inst).catch(() => ({} as Record<string, string>));
-    if (p.contents !== "write" || (wm.mode !== "branch" && p.pull_requests !== "write")) throw new RunnerError("the GitHub App installation lacks Contents/Pull requests write permission", 403);
-    // The user's own GitHub permission must allow pushing; the App's permission alone is not enough (V6).
-    await assertUserCanWrite(await githubUserToken(), fix.repo_key).catch((e) => { throw new RunnerError(String((e as Error).message), 403); });
+    // The write itself: the App must hold what this destination needs and the user must have write access (V6).
+    // Missing and unconfirmed both refuse, with different messages (lib/fix-permissions.ts).
+    const perm = await autoFixPermission({ inst, repoFull: fix.repo, mode: wm.mode, step: "write", userToken: await githubUserToken() });
+    if (!perm.ok) throw new RunnerError(perm.blocker!.replace(/^Repository permission: /, ""), 403);
     const a = await store.getAssessment(fix.assessment_id);
     if (!a) throw new RunnerError("assessment missing", 404);
     const out = await approveValidated(fix, a, await store.getFinding(a.finding_id), inst, { userLogin: user.login, patchVersion: body.patch_version, mode: wm.mode });

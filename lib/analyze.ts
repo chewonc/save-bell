@@ -1,7 +1,8 @@
 // Stages 3–5 for one (finding, repo): locate, assess conditions with cited evidence, verify citations.
 // Port of feasibility/gate.mjs + extract.mjs with the version condition computed in code.
 import type { Assessment, Claim, ConditionDef, ConditionResult, Finding, Item, Tier, WatchedRepo } from "./schema";
-import { candidateFiles, readFile, versionInRanges } from "./repo";
+import { candidateFiles, readFile, tree, versionInRanges } from "./repo";
+import { ANALYZER_RULES_1, ANALYZER_RULES_2, evaluateRule, loadSources, ruleFor, statedPrecondition, uncheckedPreconditionCondition } from "./preconditions";
 import { hasAI } from "./env";
 import { investigate } from "./investigate";
 import { deriveSeverity } from "./severity";
@@ -82,7 +83,12 @@ export async function modelConditionStates(files: { path: string; text: string }
  * "capped" = the repository's users are over their monthly hosted budget, so code conditions stay Unknown and the
  * verdict can only be Unclear ("Possible issue") or Not Affected, never a confirmed vulnerability.
  */
-export async function assess(finding: Finding, claim: Claim, repo: WatchedRepo, opts: { replayed?: boolean; items?: Item[] } = {}): Promise<Assessment> {
+/** Analyzer used by the bulk pipeline. "rules-2" (precondition checks) changes stored verdicts, so it is opt-in until
+ *  the owner approves it after a shadow evaluation; an explicit re-check always uses it (lib/reverify.ts). */
+export const pipelineAnalyzer = () => (process.env.AW_PRECONDITIONS === "1" ? ANALYZER_RULES_2 : ANALYZER_RULES_1);
+
+export async function assess(finding: Finding, claim: Claim, repo: WatchedRepo, opts: { replayed?: boolean; items?: Item[]; analyzer?: string; origin?: Assessment["origin"]; previous?: Assessment } = {}): Promise<Assessment> {
+  const analyzer = opts.analyzer ?? pipelineAnalyzer();
   const sha = repo.sha!;
   const tier: Tier = finding.tier;
   const pkgNames = claim.packages.map((p) => p.name);
@@ -118,9 +124,9 @@ export async function assess(finding: Finding, claim: Claim, repo: WatchedRepo, 
     const inRange = p.affected_ranges.length ? versionInRanges(inst.version, p.affected_ranges) : null;
     const lineNo = (fileMap.get(inst.source_file) ?? []).findIndex((l) => l.includes(`node_modules/${inst.name}"`) || l.includes(`"${inst.name}"`)) + 1;
     const ev = [{ file: inst.source_file, line: lineNo > 0 ? lineNo : null, quote: null, sha }];
-    if (inRange === true) computed.push(cond(`version_${p.name}`, `${p.ecosystem}/${p.name}@${inst.version} is within the affected range(s) ${p.affected_ranges.join(" | ")}`, "Observed", ev, "Computed from lockfile version and stated ranges", true));
-    else if (inRange === false) computed.push(cond(`version_${p.name}`, `${p.ecosystem}/${p.name}@${inst.version} is within the affected range(s) ${p.affected_ranges.join(" | ")}`, "Contradicted", ev, "Installed version is outside every stated affected range", true));
-    else computed.push(cond(`version_${p.name}`, `${p.ecosystem}/${p.name}@${inst.version} is within an affected range (ranges not stated or unparsable)`, "Inferred", ev, "Package present; affected range not machine-checkable from the report", true));
+    if (inRange === true) computed.push({ ...cond(`version_${p.name}`, `${p.ecosystem}/${p.name}@${inst.version} is within the affected range(s) ${p.affected_ranges.join(" | ")}`, "Observed", ev, "Computed from lockfile version and stated ranges", true), basis: "version" });
+    else if (inRange === false) computed.push({ ...cond(`version_${p.name}`, `${p.ecosystem}/${p.name}@${inst.version} is within the affected range(s) ${p.affected_ranges.join(" | ")}`, "Contradicted", ev, "Installed version is outside every stated affected range", true), basis: "version" });
+    else computed.push({ ...cond(`version_${p.name}`, `${p.ecosystem}/${p.name}@${inst.version} is within an affected range (ranges not stated or unparsable)`, "Inferred", ev, "Package present; affected range not machine-checkable from the report", true), basis: "version" });
   }
 
   // Model: states for the extracted conditions
@@ -130,7 +136,7 @@ export async function assess(finding: Finding, claim: Claim, repo: WatchedRepo, 
   let model = "none"; let model_served: Assessment["model_served"] = null;
   const deterministic = condsIn.length === 0 && claim.packages.length > 0;
   // "capped" now means "no model on this deployment": code conditions stay Unknown until the user's own AI checks them.
-  const hosted: Assessment["hosted"] = deterministic ? "deterministic" : !hasAI() ? "capped" : "model";
+  let hosted: Assessment["hosted"] = deterministic ? "deterministic" : !hasAI() ? "capped" : "model";
   if (hosted !== "model") {
     const bad = claim.packages.filter((p) => computed.some((c) => c.id === `version_${p.name}` && c.state !== "Contradicted"));
     modelOut = { locations: [], conditions: [], recommendations: bad.map((p) => ({ text: `Upgrade ${p.name} to a version outside the affected range${p.affected_ranges.length ? ` (${p.affected_ranges.join(" | ")})` : ""}.`, condition_ids: [`version_${p.name}`] })),
@@ -161,7 +167,21 @@ export async function assess(finding: Finding, claim: Claim, repo: WatchedRepo, 
     return cond(c.id, c.text, m.state, m.evidence_file ? [{ file: m.evidence_file, line: m.evidence_line, quote: m.evidence_file ? (fileMap.get(m.evidence_file)?.[m.evidence_line! - 1] ?? null) : null, sha }] : [], m.reasoning, false, c);
   });
 
-  const all = [...computed, ...conditions];
+  // rules-2 (no model): replace "not analysed" with deterministic precondition checks where a rule exists; otherwise
+  // keep the advisory's preconditions visibly Unknown instead of dropping them.
+  let precond: ConditionResult[] = conditions;
+  const notes: string[] = [];
+  if (analyzer === ANALYZER_RULES_2 && hosted !== "model") {
+    // Earlier condition states (e.g. from the hackathon-era AI analysis, whose citations were re-read and matched) are
+    // kept only for the same commit; on a new commit they are not carried over.
+    const prevSame = opts.previous && opts.previous.sha === sha ? opts.previous.conditions.filter((c) => !c.id.startsWith("version_")) : null;
+    const r = await deterministicPreconditions({ ids: finding.ids, tier, claim, computed, legacy: prevSame ?? conditions, legacySameCommit: !!prevSame, items: opts.items ?? [], sha, subdir: repo.subdir ?? "",
+      list: () => tree(repo.repo, sha), read: (p) => readFile(repo.repo, sha, p) });
+    precond = r.conditions; notes.push(...r.notes);
+    if (r.rule) hosted = "deterministic"; // the preconditions were checked by rules, not left unanalysed
+    if (precond.length) modelOut.unverified = modelOut.unverified.filter((u) => !u.startsWith("SaveBell checked the installed package version only"));
+  }
+  const all = [...computed, ...precond];
   const d = decide(all, tier);
   const processed_at = new Date().toISOString();
   const severity = deriveSeverity({ verdict: d.verdict, tier }, opts.items ?? []);
@@ -172,13 +192,52 @@ export async function assess(finding: Finding, claim: Claim, repo: WatchedRepo, 
     finding_id: finding.id, repo: repo.subdir ? `${repo.repo}/${repo.subdir}` : repo.repo, sha, tier, dependency, locations, conditions: all,
     verdict: d.verdict, verdict_reason: d.reason, verdict_qualifier: qualifier(d.verdict, tier),
     missing_evidence: d.missing,
-    unverified: [...new Set(modelOut.unverified), ...(dropped.length ? [`${dropped.length} citation(s) failed verification and were dropped: ${dropped.join(", ")}`] : [])],
+    unverified: [...new Set([...modelOut.unverified, ...notes]), ...(dropped.length ? [`${dropped.length} citation(s) failed verification and were dropped: ${dropped.join(", ")}`] : [])],
     recommendations: modelOut.recommendations,
     timestamps: { published_at: finding.published_at, discovered_at: finding.discovered_at, processed_at, notified_at: null },
-    model, model_served, replayed: !!opts.replayed, hosted,
+    model, model_served, replayed: !!opts.replayed, hosted, analyzer: hosted === "model" ? `model+${analyzer}` : analyzer, ...(opts.origin ? { origin: opts.origin } : {}),
   };
 }
 
 function cond(id: string, text: string, state: ConditionResult["state"], evidence: ConditionResult["evidence"], reasoning: string, computed: boolean, def?: ConditionDef): ConditionResult {
   return { id, text, role: def?.role ?? "required", mitigation_kind: def?.mitigation_kind ?? "not_applicable", source_quote: def?.source_quote ?? "", state, evidence, reasoning, computed };
+}
+
+/**
+ * The rules-2 precondition step, shared by the analyzer and the read-only shadow evaluation
+ * (scripts/checks/shadow-eval.mts), so both decide in exactly the same way.
+ */
+export async function deterministicPreconditions(x: { ids: string[]; tier?: Tier; claim: Pick<Claim, "packages" | "conditions">; computed: ConditionResult[]; legacy: ConditionResult[]; legacySameCommit?: boolean; items: Pick<Item, "text">[]; sha: string; subdir: string; list: () => Promise<{ path: string; size?: number }[]>; read: (p: string) => Promise<string | null> }): Promise<{ conditions: ConditionResult[]; notes: string[]; rule: string | null }> {
+  const notes: string[] = [];
+  const rule = ruleFor(x.ids);
+  if (rule && x.claim.packages.some((p) => p.name === rule.package && p.ecosystem === rule.ecosystem)) {
+    const pkgPresent = x.computed.some((c) => c.id === `version_${rule.package}` && c.state !== "Contradicted");
+    const entries = await x.list().catch(() => null);
+    let conditions: ConditionResult[];
+    if (!entries) conditions = rule.conditions.map((d) => ({ ...cond(d.id, d.text, "Unknown", [], "The repository file list could not be read, so the precondition was not checked", true), basis: "no_rule" as const }));
+    else conditions = (await evaluateRule(rule, await loadSources(entries, x.subdir, x.read), x.read, x.sha)).conditions;
+    // An earlier AI analysis of this same commit is not overruled silently. If the rules and that analysis reach
+    // opposite verdicts (one Affected, the other Not Affected), neither is taken as the answer: the finding is held at
+    // Possible issue with an explicit conflict condition. Otherwise the rule result decides and the earlier AI states
+    // are reported as notes (they are judgements, not rule-checked facts).
+    const earlier = x.legacySameCommit ? x.legacy.filter((c) => c.state !== "Unknown" && c.evidence.some((e) => e.file && e.line)) : [];
+    if (earlier.length) {
+      const tier = x.tier ?? "official";
+      const byRules = decide([...x.computed, ...conditions], tier).verdict;
+      const byAI = decide([...x.computed, ...earlier], tier).verdict;
+      const opposite = (byRules === "Affected" && byAI === "Not Affected") || (byRules === "Not Affected" && byAI === "Affected");
+      if (opposite) conditions.push({ id: "analysis_conflict", text: "SaveBell's rules and the earlier AI analysis of this commit agree", role: "required", mitigation_kind: "not_applicable", source_quote: "", state: "Unknown", evidence: earlier.flatMap((c) => c.evidence).slice(0, 4), computed: true, basis: "conflict",
+        reasoning: `The rules give ${byRules} but the earlier AI analysis gave ${byAI} (${earlier.map((c) => `${c.id}: ${c.state}`).join(", ")}). Static rules and AI judgements both have limits, so this stays a Possible issue until a person or your own AI agent reviews it.` });
+      else notes.push(`The earlier AI analysis of this commit (${earlier.map((c) => `${c.id}: ${c.state}`).join(", ")}) is kept for reference; the verdict comes from the rule checks.`);
+    }
+    if (x.claim.conditions.length) notes.push(`Preconditions checked by SaveBell's deterministic rules for ${rule.advisories[0]}; the earlier model-extracted condition(s) ${x.claim.conditions.map((c) => c.id).join(", ")} were replaced by these checks.`);
+    if (!pkgPresent) notes.push(`${rule.package} is not installed in an affected version, so the preconditions do not change the verdict.`);
+    return { conditions, notes, rule: rule.advisories[0] };
+  }
+  if (x.legacy.length) return { conditions: x.legacy.map((c) => (x.legacySameCommit && c.state !== "Unknown" && c.evidence.some((e) => e.file && e.line)
+      // Evidence-backed state from the earlier analysis of this same commit: kept, and labelled as such (not a rule result).
+      ? { ...c, basis: c.basis ?? ("model" as const), reasoning: `Earlier analysis of this commit (citation re-read and matched): ${c.reasoning}`.slice(0, 600) }
+      : { ...c, state: "Unknown" as const, evidence: [], basis: "no_rule" as const, reasoning: "SaveBell has no deterministic check for this precondition and this deployment runs no AI model, so it stays Unknown." })), notes, rule: null };
+  const sentence = statedPrecondition(x.items.map((i) => i.text).join(" "));
+  return { conditions: sentence ? [uncheckedPreconditionCondition(sentence)] : [], notes, rule: null };
 }

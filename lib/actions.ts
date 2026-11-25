@@ -10,6 +10,8 @@ import { isVerified, location } from "./labels";
 import { UNFIXABLE } from "./fixgate";
 import type { Assessment, Fix } from "./schema";
 import { isStaleRun } from "./run-stale";
+/** Set by lib/pr-state.ts when the fix's pull request was closed on GitHub without merging. */
+export const PR_CLOSED_NOTE = "The pull request was closed without merging. Nothing was merged; you can fix it again.";
 import { needsWrite, type RemediationMode } from "./remediation-mode";
 
 export type ActionKind = "fix_now" | "retry" | "approve" | "verify" | "review_fix" | "view_pr" | "view_fix" | "view_progress";
@@ -20,7 +22,7 @@ export type FindingAction = {
   note: string | null;
 };
 // mode: the user's saved remediation preference. "preview" needs no write access, so missing write permission is not a blocker there.
-export type ActionContext = { fixEnabled: boolean; allowPr: boolean; isDemo: boolean; hasInstallation: boolean; writePermission: boolean | null; mode?: RemediationMode };
+export type ActionContext = { fixEnabled: boolean; allowPr: boolean; isDemo: boolean; hasInstallation: boolean; writePermission: boolean | null; mode?: RemediationMode; dependencyPlan?: boolean; permission?: { ok: boolean; blocker: string | null } | null };
 
 const ACTIVE: Partial<Record<Fix["status"], NonNullable<FindingAction["state"]>["key"]>> = { drafting: "preparing", approved: "creating_pr", queued: "preparing", running: "in_progress", merging: "checks" };
 
@@ -37,9 +39,12 @@ export function automationBlocker(a: Assessment, ctx: ActionContext): string | n
   const write = needsWrite(ctx.mode ?? "pr");
   if (!ctx.fixEnabled) return "Deployment configuration: automated fixes are turned off on this deployment (FIX_ENABLED is not set).";
   if (ctx.isDemo) return "Shared demo repository: fixes are preview-only here.";
-  if (!loc) return "No exact line was cited, so there is nothing safe to change automatically.";
-  if (UNFIXABLE.test(loc.file)) return `${loc.file.split("/").pop()} can't be changed automatically (lockfiles, secrets and CI workflows are excluded).`;
+  // A dependency plan changes the manifest named by the plan, not a cited code line.
+  if (!ctx.dependencyPlan && !loc) return "No exact line was cited, so there is nothing safe to change automatically.";
+  if (!ctx.dependencyPlan && loc && UNFIXABLE.test(loc.file)) return `${loc.file.split("/").pop()} can't be changed automatically (lockfiles, secrets and CI workflows are excluded).`;
   if (!ctx.hasInstallation) return "Repository permission: install the SaveBell GitHub App on this repository.";
+  // The shared Auto Fix permission decision (lib/fix-permissions.ts), in every mode: a preview still starts a run.
+  if (ctx.permission && !ctx.permission.ok) return ctx.permission.blocker;
   if (!write) return null;
   if (ctx.writePermission === false) return "Repository permission: the GitHub App needs write access to contents and pull requests.";
   if (ctx.writePermission == null) return "Repository permission: write access for this repository could not be confirmed.";
@@ -69,7 +74,7 @@ export function findingAction(a: Assessment, fixes: Fix[], ctx: ActionContext, c
   const stalledRun = !!fx && isStaleRun(fx, now);
   const failed = fx && (fx.status === "failed" || fx.status === "validation_failed" || stalledRun);
   const cancelled = fx?.status === "cancelled";
-  const failNote = cancelled ? "You cancelled the last attempt; nothing was written to your repository." : stalledRun ? `The runner never reported back${fx?.runner?.run_url ? ` (${fx.runner.run_url})` : ""}; nothing was written. You can start it again.` : fx?.error ?? null;
+  const failNote = cancelled && fx?.error === PR_CLOSED_NOTE ? PR_CLOSED_NOTE : cancelled ? "You cancelled the last attempt; nothing was written to your repository." : stalledRun ? `The runner never reported back${fx?.runner?.run_url ? ` (${fx.runner.run_url})` : ""}; nothing was written. You can start it again.` : fx?.error ?? null;
   if (blocker) return { primary: { kind: "review_fix", href: fx ? fixHref : `${caseHref}#how-to-fix`, external: false }, state: failed ? { key: stalledRun ? "stalled" : "failed", tone: "bad" } : cancelled ? { key: "cancelled", tone: "muted" } : null, note: (failed || cancelled) && failNote ? `${failNote} ${blocker}` : blocker };
   if (failed) return { primary: { kind: "retry", href: `${caseHref}?act=1#fix`, external: false }, state: { key: stalledRun ? "stalled" : "failed", tone: "bad" }, note: failNote };
   return { primary: { kind: "fix_now", href: `${caseHref}?act=1#fix`, external: false }, state: cancelled ? { key: "cancelled", tone: "muted" } : fx?.status === "drafted" ? { key: "awaiting", tone: "muted" } : null, note: cancelled ? failNote : null };

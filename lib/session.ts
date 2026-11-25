@@ -14,6 +14,13 @@ const memo = new Map<string, { uid: string; at: number }>();
 export async function githubUserToken(): Promise<string | null> {
   return (await githubUserTokenDiag()).token;
 }
+/** Whether GitHub still accepts this browser's sign-in: false when the token is missing or rejected (revoked/expired). */
+export async function githubSignInValid(): Promise<boolean> {
+  const t = await githubUserToken();
+  if (!t) return false;
+  const r = await fetch("https://api.github.com/user", { headers: { Authorization: `Bearer ${t}`, "User-Agent": USER_AGENT, Accept: "application/vnd.github+json" } }).catch(() => null);
+  return r ? r.status !== 401 : true; // a network failure is not proof the sign-in is gone
+}
 /** Same, with the failure reason kept (never the token itself) for /api/auth/whoami and the auth log. */
 export async function githubUserTokenDiag(): Promise<{ token: string | null; error: string | null }> {
   try {

@@ -8,7 +8,8 @@ import { env, hasGitHubApp } from "@/lib/env";
 import { explainGitHubError, listInstallationReposApp } from "@/lib/github-app";
 import { getDict, getLocale } from "@/lib/i18n";
 import { repoStatus } from "@/lib/labels";
-import { requireUser } from "@/lib/session";
+import { githubSignInValid, requireUser } from "@/lib/session";
+import { SignInButton } from "@/components/sign-in-button";
 import { SYSTEM_USER, store } from "@/lib/store";
 import { addRepos, beginConnect, removeRepo, rescan, setAllowPr, setPaused } from "./actions";
 
@@ -16,12 +17,12 @@ export async function RepositoriesPanel({ sp, embedded = false }: { sp: Record<s
   const user = await requireUser(embedded ? "/settings" : "/repos");
   const back = embedded ? <input type="hidden" name="back" value="settings" /> : null;
   const d = await getDict(await getLocale());
-  const [insts, mine] = await Promise.all([store.listUserInstallations(user.id), store.listUserRepos(user.id)]);
+  const [insts, mine, signInOk] = await Promise.all([store.listUserInstallations(user.id), store.listUserRepos(user.id), hasGitHubApp() ? githubSignInValid() : Promise.resolve(true)]);
   const watched = await Promise.all(mine.map(async (ur) => ({ ur, w: await store.getRepo(ur.repo_key) })));
   const demo = env.DEMO_SHARED_REPOS ? await Promise.all((await store.listUserRepoKeys(SYSTEM_USER)).map((k) => store.getRepo(k))) : [];
   // Listed with each installation's own token (refreshed automatically); the user's sign-in token is not needed here.
   const pickers = await Promise.all(insts.filter((i) => !i.suspended).map(async (i) => {
-    try { const repos = await listInstallationReposApp(i.id); return { inst: i, repos: repos.map((r): PickRepo => ({ ...r, watched: mine.some((m) => m.repo_key === r.full_name && !m.paused) })), error: null }; }
+    try { const repos = await listInstallationReposApp(i.id); return { inst: i, repos: repos.map((r): PickRepo => ({ ...r, watched: mine.some((m) => m.repo_key === r.full_name && !m.paused && !m.access_lost), lost: mine.some((m) => m.repo_key === r.full_name && !!m.access_lost) })), error: null }; }
     catch (e) { await store.log({ kind: "error", source: "repos", detail: `list repositories for installation ${i.id}: ${String((e as { status?: number }).status ?? "")} ${String(e).slice(0, 120)}` }); return { inst: i, repos: [] as PickRepo[], error: explainGitHubError(e, i.account) }; }
   }));
   const listFailed = pickers.some((p) => p.error);
@@ -46,7 +47,10 @@ export async function RepositoriesPanel({ sp, embedded = false }: { sp: Record<s
             {user.avatar ? <img src={user.avatar} alt="" width={40} height={40} className="rounded-full" /> /* eslint-disable-line @next/next/no-img-element -- GitHub avatar */ : <span aria-hidden className="w-10 h-10 rounded-full bg-[var(--sunken)] grid place-items-center font-semibold">{user.login.slice(0, 1).toUpperCase()}</span>}
             <div className="grid">
               <span className="text-[calc(15px*var(--ui))] font-semibold">{user.login}</span>
-              <span className={`text-[calc(13px*var(--ui))] ${insts.length ? "tone-ok" : "text-ink2"}`}>{insts.length ? "✓ Connected to GitHub" : "Not connected yet"}</span>
+              {insts.length && !signInOk
+                ? <span className="text-[calc(13px*var(--ui))] tone-warn">GitHub sign-in expired. Sign in again to manage repositories.</span>
+                : <span className={`text-[calc(13px*var(--ui))] ${insts.length ? "tone-ok" : "text-ink2"}`}>{insts.length ? "✓ Connected to GitHub" : "Not connected yet"}</span>}
+              {insts.length > 0 && !signInOk && <SignInButton next={embedded ? "/settings#repositories" : "/repos"} label="Sign in with GitHub" />}
             </div>
           </div>
           {insts.length > 0 && (

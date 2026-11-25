@@ -1,9 +1,8 @@
 // POST: the user's explicit approval. Checks: session, fix owner, per-repo allow_pr, not a shared demo repo,
 // App installation present. Then branch + commit + DRAFT pull request (lib/fix-apply.ts). Never merges.
-import { assertUserCanWrite } from "@/lib/access";
+import { autoFixPermission } from "@/lib/fix-permissions";
 import { applyFix } from "@/lib/fix-apply";
-import { installationCanWrite, installationPermissions } from "@/lib/github-app";
-import { env, hasGitHubApp } from "@/lib/env";
+import { env, hasGitHubApp, hasRunner } from "@/lib/env";
 import { notifyFix } from "@/lib/notify";
 import { writeModeFor } from "@/lib/remediation-mode";
 import { currentUser, githubUserToken, isSystemRepo } from "@/lib/session";
@@ -23,6 +22,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (fix.user_id !== user.id) return Response.json({ error: "only the user who drafted this fix can approve it" }, { status: 403 });
   // A failed apply (e.g. the App's write permission not yet accepted → 403) may be retried without re-drafting.
   if (fix.status !== "drafted" && fix.status !== "failed") return Response.json({ error: `fix is ${fix.status}` , fix }, { status: 409 });
+  // Plan-based fixes must run in the user's Actions first: tests and re-verification come before the second approval.
+  if (fix.kind) return Response.json({ error: "this fix must be run and re-verified first; a draft pull request is created only after you approve the checked result", fix }, { status: 409 });
+  // On a deployment with the runner, every change goes through an approved plan, the run, and the re-check; an older
+  // fix drafted without a plan can no longer be written directly (it would skip both).
+  if (hasRunner()) return Response.json({ error: "this fix was drafted without an approved plan; review and approve the current fix plan instead", fix }, { status: 409 });
   const body = (await req.json().catch(() => ({}))) as { reviewed?: boolean; mode?: string; patch_version?: string };
   if (!body.reviewed) return Response.json({ error: "approval requires confirming that the diff was reviewed" }, { status: 400 });
   const wm = writeModeFor(body.mode);
@@ -33,11 +37,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const w = await store.getRepo(fix.repo_key);
   const inst = w?.installation_id ?? ur.installation_id;
   if (!hasGitHubApp() || !inst) return Response.json({ error: "this repository is not connected through the GitHub App installation, so no write is possible" }, { status: 403 });
-  // The App installation must hold the write permissions this destination needs (checked before any approval is recorded;
-  // an unreadable permission set is treated as missing, like the runner approval route).
-  const perms = await installationPermissions(inst).catch(() => ({} as Record<string, string>));
-  if (!installationCanWrite(perms, wm.mode === "branch" ? "branch" : "pr")) return Response.json({ error: "the GitHub App installation lacks Contents/Pull requests write permission for this repository; accept the App's updated permissions on GitHub" }, { status: 403 });
-  try { await assertUserCanWrite(await githubUserToken(), fix.repo_key); } catch (e) { return Response.json({ error: (e as Error).message }, { status: 403 }); } // V6
+  // Shared policy (lib/fix-permissions.ts), checked before any approval is recorded: App write permission for this
+  // destination and the user's own push access. "Missing" and "couldn't confirm" read differently; both refuse (V6).
+  const perm = await autoFixPermission({ inst, repoFull: fix.repo_key.split("/").slice(0, 2).join("/"), mode: wm.mode === "branch" ? "branch" : "pr", step: "write", userToken: await githubUserToken() });
+  if (!perm.ok) return Response.json({ error: perm.blocker, permission: perm.kind }, { status: 403 });
   const a = await store.getAssessment(fix.assessment_id);
   if (!a) return Response.json({ error: "assessment missing" }, { status: 404 });
   const f = await store.getFinding(a.finding_id);

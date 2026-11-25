@@ -16,7 +16,7 @@ export const env = {
   QSTASH_CURRENT_SIGNING_KEY: process.env.QSTASH_CURRENT_SIGNING_KEY ?? "",
   QSTASH_NEXT_SIGNING_KEY: process.env.QSTASH_NEXT_SIGNING_KEY ?? "",
   ALERT_WEBHOOK_URL: process.env.ALERT_WEBHOOK_URL ?? "", // Slack or Discord incoming webhook
-  ADMIN_TOKEN: process.env.ADMIN_TOKEN ?? "", // protects replay / manual routes
+  ADMIN_TOKEN: process.env.ADMIN_TOKEN?.trim() ?? "", // protects replay / manual routes
   // Identity + GitHub App (sign-in uses the App's OAuth client; repo access uses installation tokens)
   BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? "",
   GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID ?? "",
@@ -39,7 +39,7 @@ export const env = {
   VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? process.env.VAPID_PUBLIC_KEY ?? "",
   VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY ?? "",
   VAPID_SUBJECT: process.env.VAPID_SUBJECT ?? "mailto:savebell@example.com",
-  APP_URL: (process.env.APP_URL || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000")).replace(/\/$/, ""),
+  APP_URL: (process.env.APP_URL?.trim() || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000")).replace(/\/$/, ""),
 };
 
 /** True only when a deployment has configured its own model endpoint. False on the hosted site. */

@@ -3,7 +3,8 @@
 // write unless the stored fix carries the user's live approval grant for exactly this patch and destination
 // (lib/write-auth.ts), checked right before the branch is created and again before the pull request is opened.
 // The default branch is never written; nothing is merged here; CI results are read, never triggered.
-import { env, hasQStash } from "./env";
+import { env, hasQStash, hasRunner } from "./env";
+import { assertPlanExecuted } from "./exec-grant";
 import { scopedRepoOctokit } from "./github-app";
 import { prText } from "./fix";
 import { assertWrite, fixBranch, stillAllowed } from "./write-auth";
@@ -14,6 +15,9 @@ import { pullOutcome } from "./pull-state";
 
 export type ApplyOpts = { draft?: boolean; author?: string; testsNote?: string; openPr?: boolean };
 export async function applyFix(fix: Fix, a: Assessment, f: Finding | null, installationId: number, opts: ApplyOpts = {}): Promise<Fix> {
+  // The write boundary itself refuses any change that did not go through an approved plan, its single run and the
+  // re-check, whichever route or window asked for the write (lib/exec-grant.ts).
+  if (hasRunner()) assertPlanExecuted(fix);
   const draft = opts.draft ?? true;
   const [owner, repo] = fix.repo.split("/");
   const w = await store.getRepo(fix.repo_key);
@@ -42,12 +46,9 @@ export async function applyFix(fix: Fix, a: Assessment, f: Finding | null, insta
   const { data: newTree } = await ok.rest.git.createTree({ owner, repo, base_tree: headCommit.tree.sha, tree });
   const pt = prText(fix, a, f, env.APP_URL);
   const title = pt.title;
-  const body = opts.author ? `> Changes made by **${opts.author}** in an isolated runner and validated by SaveBell before this write.
-> ${opts.testsNote ?? ""}
-> Audit trail: ${(fix.events ?? []).map((e) => `${e.at} ${e.actor} ${e.action}`).join(" · ")}
-
-${pt.body}` : pt.body;
-  const { data: commit } = await ok.rest.git.createCommit({ owner, repo, message: `${title}\n\n${fix.summary}\n\n${opts.testsNote ?? "Syntax-checked only; not executed."} Remediation not verified. ${opts.author ? `Edited by ${opts.author}; ` : "Drafted by "}SaveBell, assessment ${a.id}.`, tree: newTree.sha, parents: [headSha] });
+  // Every pull request and commit uses the plain text from prText(): no internal IDs or audit logs (those stay in SaveBell).
+  const body = pt.body;
+  const { data: commit } = await ok.rest.git.createCommit({ owner, repo, message: title, tree: newTree.sha, parents: [headSha] });
   // Blobs, tree and commit above are unreferenced objects; creating the branch is the first visible write.
   await assertWrite(fix.id, { kind: "create_branch", ...target });
   let createdBranch = false;

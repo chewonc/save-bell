@@ -13,7 +13,7 @@
 import { randomBytes } from "node:crypto";
 import { patchVersion } from "./remediation-control";
 import type { Fix } from "./schema";
-import { store } from "./store";
+import { store, APPROVAL_CLAIM_TTL_S } from "./store";
 
 export const GRANT_TTL_MS = 10 * 60e3;
 export const MERGE_TTL_MS = 45 * 60e3;
@@ -85,7 +85,7 @@ export async function assertWrite(fixId: string, op: Parameters<typeof checkWrit
   const fresh = await store.getFix(fixId);
   if (!fresh) throw new WriteAuthError("fix not found", 404);
   const g = checkWrite(fresh, op, Date.now(), await store.cancelledAt(fixId));
-  if (!(await store.claim(`write:${g.id}:${op.kind}`))) throw new WriteAuthError("this approval was already used for that operation", 409);
+  if (!(await store.claim(`write:${g.id}:${op.kind}`, APPROVAL_CLAIM_TTL_S))) throw new WriteAuthError("this approval was already used for that operation", 409);
   return g;
 }
 
@@ -108,7 +108,7 @@ export async function recordApproval(fixId: string, input: { userId: string; use
   const fresh = await store.getFix(fixId);
   if (!fresh) throw new WriteAuthError("fix not found", 404);
   input.check(fresh, input.reviewedVersion);
-  if (!(await store.claim(`approve:${fresh.id}:${fresh.events.length}:${fresh.status}`))) throw new WriteAuthError("this patch is already being approved", 409);
+  if (!(await store.claim(`approve:${fresh.id}:${fresh.events.length}:${fresh.status}`, APPROVAL_CLAIM_TTL_S))) throw new WriteAuthError("this patch is already being approved", 409);
   const grant = issueGrant(fresh, input);
   const next = input.event({ ...fresh, status: "approved", approved_at: grant.issued_at, grant }, input.userLogin, "approved",
     `${input.detail}; approval ${grant.id.slice(0, 6)} for patch ${grant.patch_version} → ${grant.action === "branch" ? `branch ${grant.branch}` : `${grant.action === "pr_then_merge" ? "pull request, merge after CI" : "draft pull request"} from ${grant.branch} into ${grant.base_branch}`}, valid until ${grant.expires_at}`);

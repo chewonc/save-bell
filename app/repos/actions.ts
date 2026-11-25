@@ -39,7 +39,8 @@ export async function addRepos(formData: FormData) {
   const stopped: string[] = [];
   for (const key of stops) {
     const ur = await store.getUserRepo(user.id, key);
-    if (!ur || ur.paused || (ur.installation_id != null && ur.installation_id !== instId)) continue; // only this user's own, in this installation
+    // Only this user's own link, in this installation; a link left on a deleted installation (access lost) may be stopped too.
+    if (!ur || ur.paused || (ur.installation_id != null && ur.installation_id !== instId && !ur.access_lost)) continue;
     await store.addUserRepo({ ...ur, paused: true });
     stopped.push(key);
   }

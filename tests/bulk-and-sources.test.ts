@@ -39,7 +39,7 @@ test("compatible fixes combine per repository; overlaps, other commits and dupli
 
 test("bulk approval re-checks everything server-side and never merges", () => {
   const s = readFileSync("app/api/bulk/approve/route.ts", "utf8");
-  for (const must of [/ownFix\(user\.id, id\)/, /groupFixes\(fixes\)/, /recordApproval\(/, /assertUserCanWrite\(token, repoKey\)/, /isSystemRepo\(repoKey\)/, /writeModeFor\(body\.mode\)/, /patchVersion\(f\.files\) !== f\.patch_version/]) assert.match(s, must);
+  for (const must of [/ownFix\(user\.id, id\)/, /groupFixes\(fixes\)/, /recordApproval\(/, /autoFixPermission\(\{ inst, repoFull: repoKey/, /if \(!perm\.ok\) throw/, /isSystemRepo\(repoKey\)/, /writeModeFor\(body\.mode\)/, /patchVersion\(f\.files\) !== f\.patch_version/]) assert.match(s, must);
   assert.doesNotMatch(s, /pulls\.merge|tryMerge|scheduleMerge/);
   const p = readFileSync("app/api/bulk/preview/route.ts", "utf8");
   assert.match(p, /canSee\(user\.id, raw\.repo\)/); assert.doesNotMatch(p, /\/api\/verify|assess\(|draftFix|startRun/, "preview starts no work");

@@ -16,7 +16,7 @@ import { approveValidated, runnerSetup, startRun } from "./runner";
 import type { Assessment, Notification } from "./schema";
 import { deriveSeverity } from "./severity";
 import { isSystemRepo } from "./session";
-import { ALERT_HISTORY, store } from "./store";
+import { ALERT_HISTORY, store, APPROVAL_CLAIM_TTL_S } from "./store";
 import { Precondition, type Candidate, type Deps, type WindowRun } from "./window-run";
 
 const ACTOR = "automatic fix run";
@@ -66,8 +66,10 @@ export const windowDeps = (): Deps => ({
     if (!isVerified(withAgent)) throw new Precondition("the finding is not confirmed");
     const f = await store.getFinding(a.finding_id);
     const items = f ? (await Promise.all(f.items.map((i) => store.getItem(i)))).filter((x) => !!x) : [];
-    const fix = await draftFix(a, f, items, uid);
-    return { fix_id: fix.id, files: fix.status === "drafted" ? fix.files.length : 0, error: fix.error };
+    // Every change now needs the user's approval of its exact plan (lib/fix-plan.ts, lib/exec-grant.ts). A window
+    // cannot give that approval, so it stops here instead of drafting an unapproved change.
+    void draftFix; void items;
+    throw new Precondition("each change needs your approval of its exact fix plan; open the finding's Fix window to review and approve it");
   },
 
   async runnerBlocker(repoKey, uid) {
@@ -93,7 +95,7 @@ export const windowDeps = (): Deps => ({
     // The runner lives in the user's own GitHub Actions: without the caller workflow nothing would run.
     const setup = await runnerSetup(fix.repo, w?.default_branch ?? "main");
     if (!setup.installed) throw new Error(`the SaveBell runner workflow is not set up in ${fix.repo} (${setup.path})`);
-    if (!(await store.claim(`run:${fix.id}:${fix.events.length}:${fix.status}`))) throw new Error("this fix is already starting");
+    if (!(await store.claim(`run:${fix.id}:${fix.events.length}:${fix.status}`, APPROVAL_CLAIM_TTL_S))) throw new Error("this fix is already starting");
     // Preview mode: the runner reads the repository in the user's Actions and the patch waits for the user's approval. No repository write is authorized.
     await startRun({ ...fix, window_run_id: runId }, a, "preview", ACTOR, inst);
   },

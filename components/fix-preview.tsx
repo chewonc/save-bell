@@ -136,17 +136,20 @@ export function StatusLadder({ fix }: { fix: Fix }) {
   const ci = fix.check_runs.length ? (fix.check_runs.every((r) => r.conclusion === "success") ? "passed" : fix.check_runs.some((r) => r.conclusion && r.conclusion !== "success") ? "failed" : "pending") : fix.status === "pr_created" ? "none reported" : "not applicable yet";
   const as = fix.assessment?.label;
   const rows: [string, string, "ok" | "warn" | "bad" | "na"][] = [
-    ["Patch generated", `${fix.agent === "muse-code" ? "by Meta Muse Code (isolated runner)" : `preview by ${fix.model}`}; ${fix.files.length} file(s)`, fix.files.length ? "ok" : "bad"],
+    ["Patch generated", `${fix.kind ? "by a fixed rule in your GitHub Actions (no AI)" : fix.agent === "runner" ? "in your GitHub Actions" : `preview by ${fix.model}`}; ${fix.files.length} file(s)`, fix.files.length ? "ok" : "bad"],
     ["Tests executed", fix.runner?.tests?.executed ? `${fix.runner.tests.command} → exit ${fix.runner.tests.exit_code} (isolated runner)` : fix.runner?.finished_at ? "no test command detected; none executed" : "not run (preview only)", fix.runner?.tests?.executed ? (fix.runner.tests.exit_code === 0 ? "ok" : "bad") : "na"],
     ["Syntactically valid", fix.syntax_check.map((s) => `${s.path.split("/").pop()}: ${s.ok ? "parsed" : "FAILED"}`).join(", ") || "n/a", synOk ? "ok" : "bad"],
     ["Type-checked", ciTypeRun ? `by repository CI (${ciTypeRun.name}: ${ciTypeRun.conclusion ?? ciTypeRun.status})` : "not performed by SaveBell (needs the repository's dependencies); see repository CI", ciTypeRun?.conclusion === "success" ? "ok" : "na"],
     ["Existing CI passed", ci, ci === "passed" ? "ok" : ci === "failed" ? "bad" : "na"],
     ["Static remediation assessment", as ? as.replace("_", " ") : "not assessed", as === "supported" ? "ok" : as === "partially_supported" ? "warn" : as ? "bad" : "na"],
-    ["Security remediation verified", "NOT verified: nothing was executed or reproduced. Verification requires review and testing in your environment.", "warn"],
+    // Same source as the summary checks (lib/fix-summary.ts): the security re-check, never a fixed "not verified".
+    fix.post_check?.outcome === "validated" ? ["Security re-check", "passed: the installed version is outside the affected versions", "ok"]
+      : fix.post_check?.outcome === "failed" ? ["Security re-check", "failed", "bad"]
+      : ["Security re-check", "not verified. Please review and test in your environment.", "warn"],
   ];
   const glyph = { ok: "✓", warn: "⚠", bad: "✗", na: "–" };
   const color = { ok: "var(--observed)", warn: "var(--inferred)", bad: "var(--contradicted)", na: "var(--ink-2)" };
-  return <ul className="grid gap-1 text-[calc(13px*var(--ui))] border hair rounded-[6px] p-3">{rows.map(([k, v, s]) => <li key={k} className="grid grid-cols-[18px_210px_1fr] gap-2"><span style={{ color: color[s] }}>{glyph[s]}</span><span className="font-medium">{k}</span><span className="text-ink2">{v}</span></li>)}</ul>;
+  return <ul className="grid gap-1 text-[calc(13px*var(--ui))] border hair rounded-[6px] p-3">{rows.map(([k, v, s]) => <li key={k} className="grid grid-cols-[18px_1fr] gap-x-2"><span style={{ color: color[s] }} aria-hidden>{glyph[s]}</span><span><span className="font-medium">{k}:</span> <span className="text-ink2">{v}</span></span></li>)}</ul>;
 }
 
 export function Assessment({ fix }: { fix: Fix }) {

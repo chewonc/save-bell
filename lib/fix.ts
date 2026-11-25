@@ -164,38 +164,62 @@ export async function draftFix(a: Assessment, f: Finding | null, items: Item[], 
 
 /** PR title and body. States provenance, evidence, the static assessment and, prominently, what was NOT verified. */
 export function prText(fix: Fix, a: Assessment, f: Finding | null, appUrl: string): { title: string; body: string } {
+  if (fix.kind === "dependency" && fix.plan) return dependencyPrText(fix, a, f, appUrl);
   const ids = f?.ids.join(", ") || a.finding_id;
   const caseUrl = `${appUrl}/case/${a.id.split("/").map(encodeURIComponent).join("/")}`;
-  const as = fix.assessment;
-  const body = `## SaveBell: proposed fix for ${ids} (not verified)
+  // Same rule as dependencyPrText: plain words for any reader, no internal IDs, SaveBell links, labels or audit logs.
+  void caseUrl; void permalink;
+  const advisories = (f?.ids ?? []).map((id) => /^GHSA-/i.test(id) ? `[${id}](https://github.com/advisories/${id})` : id).join(", ") || ids;
+  const t = fix.runner?.tests;
+  const tests = t?.executed ? (t.exit_code === 0 ? "passed" : "failed") : "not run";
+  const body = `Proposed code change for a known vulnerability (${advisories}).${fix.summary ? ` ${fix.summary}` : ""}
 
-**Repository:** ${fix.repo} at \`${fix.base_sha}\` · **Verdict:** ${a.verdict} (${a.tier}) · **Case:** ${caseUrl}
+- Tests: ${tests}
+- Security check: not confirmed. Please review and test before merging.
 
-### What changes
-${fix.files.map((x) => x.hunks.length ? `- \`${x.path}\`: ${x.hunks.length} hunk(s): ${x.hunks.map((h) => h.rationale).join("; ")}` : `- \`${x.path}\`: edited by ${fix.agent === "muse-code" ? "Meta Muse Code" : "the drafting model"} (+${(x.patch.match(/^\+(?!\+\+)/gm) ?? []).length} / -${(x.patch.match(/^-(?!--)/gm) ?? []).length} lines)`).join("\n")}
+<sub>Prepared by SaveBell with the repository owner's approval.</sub>`;
+  return { title: `Proposed fix for a security vulnerability (${ids}), not yet verified`, body };
+}
 
-${fix.summary}
+/** PR text for an approved dependency plan: what changed and why, tests and the security re-check kept apart, and
+ *  (for a preventive upgrade) that the vulnerable conditions were not confirmed. */
+function dependencyPrText(fix: Fix, a: Assessment, f: Finding | null, appUrl: string): { title: string; body: string } {
+  const p = fix.plan as { preventive?: boolean; package?: string; installed?: string; target?: string; new_spec?: string; change?: string; why_target?: string; risks?: string[]; unconfirmed_conditions?: string[]; known_vulns_at_target?: { note?: string }; plan_hash?: string };
+  const pc = fix.post_check;
+  const ids = f?.ids.join(", ") || a.finding_id;
+  // Written for someone who has never heard of SaveBell: plain words, no internal IDs, links, audit logs or verdict labels.
+  void appUrl;
+  void ids;
+  // Each ID is explained, because readers may not know what GHSA or CVE means.
+  const idLines = (f?.ids ?? []).map((id) => /^GHSA-/i.test(id)
+    ? `[${id}](https://github.com/advisories/${id}) (GitHub's security advisory ID)`
+    : /^CVE-/i.test(id) ? `[${id}](https://nvd.nist.gov/vuln/detail/${id}) (public vulnerability ID used across the industry)` : id).join(", ");
+  // Registry text is untrusted: plain text only, no markdown or HTML, length-limited.
+  const clean = (s: string | undefined) => (s ?? "").replace(/[<>`*_[\]()#|!]/g, "").replace(/\s+/g, " ").trim().slice(0, 160);
+  const what = clean(f?.claim?.plain_title) || clean(f?.title);
+  const detail = f?.claim?.plain_title && f.title ? clean(f.title) : "";
+  const t = fix.runner?.tests;
+  const tests = t?.executed ? `${t.exit_code === 0 ? "passed" : "failed"}${t.summary?.total ? ` (${t.summary.passed} of ${t.summary.total})` : ""}` : "not run (no tests found)";
+  const security = pc?.outcome === "validated" ? `passed: ${p.target} is outside the affected versions` : pc?.outcome === "failed" ? "failed" : "not confirmed";
+  const approver = [...(fix.events ?? [])].reverse().find((e) => e.action === "approved" || e.action === "authorized")?.actor;
+  const day = (fix.runner?.finished_at ?? new Date().toISOString()).slice(0, 10);
+  const files = fix.files.map((x) => `\`${x.path}\``).join(" and ");
+  const title = p.preventive
+    ? `Upgrade ${p.package} from ${p.installed} to ${p.target} as a security precaution`
+    : `Upgrade ${p.package} from ${p.installed} to ${p.target} to fix a security vulnerability`;
+  // Who / what / when / where / why / how, one or two plain lines each.
+  const body = `**What:** Upgrades \`${p.package}\` from ${p.installed} to ${p.target}.
 
-### Static remediation assessment (SaveBell, no execution): **${as ? as.label.replace("_", " ") : "not assessed"}**
-${as?.summary ?? ""}
-${as ? as.coverage.filter((c) => c.driving).map((c) => `- ${c.condition_id}: ${c.before} → ${c.after ?? "unchanged"} [${c.tag}] ${c.text}`).join("\n") : ""}
-${as?.version_check ? `- Version check (computed): ${as.version_check.note}` : ""}
-${as?.risk_flags.length ? `\n**Risk flags:** ${as.risk_flags.join("; ")}` : ""}
-${as?.predicted_verdict ? `\nPredicted verdict after this change (static): **${as.predicted_verdict}**. ${as.predicted_reason}` : ""}
+**Why:** Version ${p.installed} has a known security vulnerability${what ? `: ${what}` : ""}.${detail ? ` (${detail})` : ""} Version ${p.target} is not affected.${p.preventive ? " This is a precaution: the affected feature was not found in use in this project." : ""}
+${idLines ? `Reference: ${idLines}.` : ""}
 
-### Evidence used
-${a.conditions.map((c) => `- ${c.state}${c.computed ? " (computed)" : ""}: ${c.text}${c.evidence[0] ? ` (${permalink(fix.repo, a.sha, c.evidence[0].file, c.evidence[0].line)}` : ""}`).join("\n")}
+**Where:** ${files}. No other code was changed.
 
-### What was NOT verified
-- Syntax only: ${fix.syntax_check.map((s) => `${s.path} ${s.ok ? "parsed" : "FAILED"}`).join(", ") || "n/a"}. Not type-checked here, not executed, no tests were run by SaveBell.
-- Exploitability was never confirmed; the remediation is **not verified**. CI results on this pull request come from this repository and do not verify that the vulnerability is fixed.
-${as?.uncertain.length ? `- Still uncertain: ${as.uncertain.join("; ")}` : ""}
-${fix.caveats.length ? `- Caveats from the drafting model: ${fix.caveats.join("; ")}` : ""}
+**How:** The version number was changed and the lockfile regenerated in this repository's GitHub Actions, using a fixed rule (no AI). The tests were then run, and the new version was checked against public vulnerability databases.
 
-### Verification required before merging
-${(as?.verification_required ?? ["Review the diff", "Run the existing test suite", "Deploy to a staging environment"]).map((v) => `- [ ] ${v}`).join("\n")}
+**Results:** Tests ${tests}. Security check ${security}.
 
----
-Drafted by model \`${fix.model}\` from the remediation brief (${appUrl}/api/remediation/${a.id.split("/").map(encodeURIComponent).join("/")}). Advisory text is untrusted data and is not reproduced here. ${fix.mode === "push" ? "The user authorized push mode: SaveBell merges this pull request only after the repository's CI checks pass and branch protection allows it." : "Draft pull request for human review; do not merge without review."}`;
-  return { title: `SaveBell: proposed fix for ${ids} (not verified)`, body };
+**Who and when:** Prepared by SaveBell on ${day}${approver && !approver.includes(":") ? `, approved by @${approver}` : " with the repository owner's approval"}.
+${p.change === "major" ? `\n**Before merging:** this is a major version upgrade and may break existing code. Please read the ${p.package} release notes and test the change.` : "\n**Before merging:** please review and test the change."}`;
+  return { title, body };
 }

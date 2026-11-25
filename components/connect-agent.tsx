@@ -2,10 +2,10 @@
 // "Connect AI agent": creates a personal token once and shows the one command to paste into the user's agent.
 import { useState } from "react";
 
-const AGENTS = ["Meta Muse Code", "Claude Code", "Codex", "Other"] as const;
+const AGENTS = ["Claude Code", "Codex", "Meta Muse Code", "Other"] as const;
 
 export function ConnectAgent({ endpoint, create }: { endpoint: string; create: (label: string) => Promise<string> }) {
-  const [agent, setAgent] = useState<(typeof AGENTS)[number]>("Meta Muse Code");
+  const [agent, setAgent] = useState<(typeof AGENTS)[number]>("Claude Code");
   const [token, setToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);

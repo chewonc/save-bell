@@ -6,12 +6,11 @@
 // patch hash and destination (lib/write-auth.ts). Groups are independent: one failure never blocks the others.
 // Nothing is merged.
 import { randomBytes } from "node:crypto";
-import { assertUserCanWrite } from "@/lib/access";
 import { ownFix } from "@/lib/authz";
 import { groupFixes } from "@/lib/bulk";
 import { env, hasGitHubApp } from "@/lib/env";
 import { applyFix } from "@/lib/fix-apply";
-import { installationPermissions } from "@/lib/github-app";
+import { autoFixPermission } from "@/lib/fix-permissions";
 import { notifyFix } from "@/lib/notify";
 import { patchVersion } from "@/lib/remediation-control";
 import { writeModeFor } from "@/lib/remediation-mode";
@@ -63,9 +62,10 @@ async function approveGroup(user: { id: string; login: string }, ids: string[], 
   const w = await store.getRepo(repoKey);
   const inst = w?.installation_id ?? ur.installation_id;
   if (!hasGitHubApp() || !inst) throw new WriteAuthError("This repository is not connected through the GitHub App.");
-  const p = await installationPermissions(inst).catch(() => ({} as Record<string, string>));
-  if (p.contents !== "write" || (mode === "pr" && p.pull_requests !== "write")) throw new WriteAuthError("The GitHub App installation lacks write permission.");
-  await assertUserCanWrite(token, repoKey);
+  // Same shared policy as the Fix window and the single-fix routes: "missing" (GitHub said no) and "couldn't confirm"
+  // (GitHub could not be asked, e.g. an expired sign-in) are told apart in the message; both refuse (Fail-Closed).
+  const perm = await autoFixPermission({ inst, repoFull: repoKey.split("/").slice(0, 2).join("/"), mode, step: "write", userToken: token });
+  if (!perm.ok) throw new WriteAuthError(perm.blocker ?? "Permission could not be confirmed.");
   const a = await store.getAssessment(fixes[0].assessment_id);
   if (!a) throw new WriteAuthError("Finding missing.", 404);
   const f = await store.getFinding(a.finding_id);

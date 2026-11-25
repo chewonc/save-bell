@@ -88,6 +88,8 @@ function BulkModal({ ids, defaultMode, onClose }: { ids: string[]; defaultMode: 
         set(i.assessment_id, { state: "preparing" });
         const ctx = await fetch(`/api/fix-context?assessment_id=${encodeURIComponent(aid)}`).then((r) => r.json());
         if (!ctx.can_act) return set(i.assessment_id, { state: "skipped", note: ctx.blocker ? String(ctx.blocker).replace(/^(Deployment configuration|Repository permission): /, "") : "Can't be fixed automatically." });
+        // Every library change needs its own approval of the exact plan (version, files, risk): bulk mode stops here.
+        if (ctx.plans?.dependency?.available) return set(i.assessment_id, { state: "skipped", note: `A plan is ready (${ctx.plans.dependency.package} ${ctx.plans.dependency.installed} → ${ctx.plans.dependency.target}). Open this finding's Fix window to review and approve it.` });
         let fix: Fix = (await post("/api/fix", { assessment_id: aid, force: true })).fix;
         if (ctx.runner_enabled && fix.status === "drafted" && fix.files.length) {
           fix = (await post(`/api/fix/${fix.id}/run`, { mode, reviewed: true })).fix;
