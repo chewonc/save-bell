@@ -57,7 +57,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
               ))}
             </ul>
           )}
-          <More><p>Works with Meta Muse Code, Claude Code, Codex or any MCP-capable agent, using your own AI plan. Through MCP your agent can read alerts and the cited code and report what it finds; SaveBell re-checks every line it cites. It cannot push code: changes stay in your editor until you approve them there. The connection key is shown once and can be revoked here with Disconnect.</p></More>
+          <More><p>Works with Claude Code, Codex, Meta Muse Code or any MCP-capable agent, using your own AI plan. Through MCP your agent can read alerts and the cited code and report what it finds; SaveBell re-checks every line it cites. It cannot push code: changes stay in your editor until you approve them there. The connection key is shown once and can be revoked here with Disconnect.</p></More>
         </Section>
 
         <Section id="remediation" title="Automatic remediation">

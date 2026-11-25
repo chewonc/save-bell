@@ -100,3 +100,25 @@ test("every user-facing read of fixes goes through fixesFor/ownFix (static guard
     assert.doesNotMatch(readFileSync(f, "utf8"), /store\.listFixes\(/, `${f} reads fixes without the owner filter`);
   }
 });
+
+test("V6: after the App is reinstalled (new installation id) a repository is re-pointed and restored, never to another user's installation", async () => {
+  const U = "gh:9003";
+  await store.putUser(user(U));
+  await link(U, "carol/app", 50); // installation 50 was deleted
+  await store.addUserRepo({ ...(await store.getUserRepo(U, "carol/app"))!, access_lost: true });
+  await store.putInstallation({ id: 51, account: "carol", account_type: "User", user_ids: [U], created_at: now, suspended: false });
+  await store.putInstallation({ id: 52, account: "other", account_type: "User", user_ids: [B], created_at: now, suspended: false });
+  await store.setAccessChecked(U, "2000-01-01T00:00:00Z");
+  const gh = { listUserInstallations: async () => [{ id: 51 }, { id: 52 }], listUserInstallationRepos: async (_t: string, id: number) => (id === 51 ? [{ full_name: "carol/app" }] : []), userRepoPermission: async () => ({ pull: true, push: true }) };
+  const r = await revalidateAccess(U, "tok", Date.now(), gh);
+  assert.deepEqual(r.restored, ["carol/app"]);
+  const l = await store.getUserRepo(U, "carol/app");
+  assert.equal(l?.installation_id, 51);
+  assert.equal(!!l?.access_lost, false);
+  // Not connected to SaveBell by this user: never used, even if GitHub lists it.
+  await store.addUserRepo({ ...l!, installation_id: 50, access_lost: true });
+  await store.setAccessChecked(U, "2000-01-01T00:00:00Z");
+  const gh2 = { ...gh, listUserInstallationRepos: async (_t: string, id: number) => (id === 52 ? [{ full_name: "carol/app" }] : []) };
+  await revalidateAccess(U, "tok", Date.now(), gh2);
+  assert.equal((await store.getUserRepo(U, "carol/app"))?.access_lost, true);
+});

@@ -32,7 +32,9 @@ export async function listAgentTokens(uid: string): Promise<AgentToken[]> {
 
 /** Revoke the per-run MCP token issued to the isolated runner for one fix (read/report only, but it should not outlive the run). */
 export async function revokeRunnerTokens(uid: string, fixId: string) {
-  for (const t of await listAgentTokens(uid)) if (t.label === `muse-code runner ${fixId.slice(0, 8)}`) await revokeAgentToken(uid, t.hash);
+  // Issued as "fix runner <id>" (lib/runner.ts); older runs used "muse-code runner <id>".
+  const mine = [`fix runner ${fixId.slice(0, 8)}`, `muse-code runner ${fixId.slice(0, 8)}`];
+  for (const t of await listAgentTokens(uid)) if (mine.includes(t.label)) await revokeAgentToken(uid, t.hash);
 }
 
 export async function revokeAgentToken(uid: string, hash: string) {

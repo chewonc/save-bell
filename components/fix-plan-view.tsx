@@ -82,7 +82,8 @@ export function NoPlanView({ plans, goVerify, notAffected = null }: { plans: Fix
       {plans.needs_recheck
         ? <><p className="text-ink2">{plans.needs_recheck}</p><button type="button" className="btn w-fit" onClick={goVerify}>Run the additional check</button></>
         : <ul className="list-disc pl-5 text-ink2">
-            {!plans.dependency.available && <li>Dependency upgrade: {plans.dependency.reason}</li>}
+            {/* A permission problem is already explained (with its button) in the notice above; don't repeat GitHub's raw error here. */}
+            {!plans.dependency.available && <li>Dependency upgrade: {/Repository permission|couldn't confirm|is missing|does not have write access/i.test(plans.dependency.reason ?? "") ? "available once the permission problem above is resolved." : plans.dependency.reason}</li>}
             <li>Code change: {plans.code.reason}</li>
             <li>AI fix: {plans.ai.reason}</li>
           </ul>}

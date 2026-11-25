@@ -5,7 +5,7 @@
 // mounted while searching, so choices made before narrowing the search are still submitted.
 import { useState } from "react";
 
-export type PickRepo = { full_name: string; private: boolean; default_branch: string; language: string | null; watched: boolean };
+export type PickRepo = { full_name: string; private: boolean; default_branch: string; language: string | null; watched: boolean; lost?: boolean };
 
 export function RepoPicker({ installationId, repos, action, manageHref, back }: { installationId: number; repos: PickRepo[]; action: (fd: FormData) => Promise<void>; manageHref?: string; back?: string }) {
   const [q, setQ] = useState("");
@@ -37,7 +37,8 @@ export function RepoPicker({ installationId, repos, action, manageHref, back }: 
               <input type="checkbox" name={r.watched ? undefined : "repo"} value={r.full_name} checked={on} onChange={(e) => onChange(r, e.target.checked)} id={`r-${installationId}-${r.full_name}`} />
               <label htmlFor={`r-${installationId}-${r.full_name}`} className="flex-1 truncate"><span>{r.full_name}</span>{r.private && <span className="text-ink2 text-[calc(12px*var(--ui))] ml-2">private</span>}
                 {r.watched && <span className={`text-[calc(12px*var(--ui))] ml-2 ${on ? "text-ink2" : "tone-warn"}`}>{on ? "monitored" : "will stop"}</span>}
-                {!r.watched && on && <span className="tone-ok text-[calc(12px*var(--ui))] ml-2">will start</span>}</label>
+                {!r.watched && on && <span className="tone-ok text-[calc(12px*var(--ui))] ml-2">{r.lost ? "will reconnect" : "will start"}</span>}
+                {!r.watched && !on && r.lost && <span className="tone-warn text-[calc(12px*var(--ui))] ml-2">access lost: tick to reconnect</span>}</label>
             </li>
           );
         })}
