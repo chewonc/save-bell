@@ -12,7 +12,7 @@ import { SuggestSource } from "@/components/suggest-source";
 import { getDict, getLocale } from "@/lib/i18n";
 
 const median = (xs: number[]) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] : null);
-const CLASS_LABEL = { push: "Pushed to SaveBell (event-driven)", near_realtime: "Checked every 5 minutes", periodic: "Checked on the source's own schedule" } as const;
+const CLASS_LABEL = { push: "Pushed to SaveBell (event-driven)", near_realtime: "Checked every 30 minutes", periodic: "Checked on the source's own schedule" } as const;
 const KIND: Record<Feed["kind"], string> = { list: "mailing list", release: "releases", research: "research", ai_security: "AI security", academic: "academic", aggregator: "aggregator", vendor: "vendor", incidents: "incidents", social: "social", news: "news" };
 const STATUS_WORD = { registered: "passed the automatic checks; not collected until its terms are reviewed", needs_review: "waiting for review", rejected: "not added", duplicate: "already covered" } as const;
 

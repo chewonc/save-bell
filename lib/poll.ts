@@ -1,4 +1,4 @@
-// Polling orchestrator. One QStash schedule hits /api/poll/tick every 5 minutes; the tick runs every
+// Polling orchestrator. One QStash schedule hits /api/poll/tick every 30 minutes; the tick runs every
 // source whose own interval has elapsed. Per-source classes and intervals are declared here so that
 // the UI can label each source by how it is really monitored (and the measured interval, not the nominal one).
 import { ingest } from "./pipeline";
@@ -13,14 +13,15 @@ import { collectable } from "./sources/terms";
 export type SourceClass = "push" | "near_realtime" | "periodic";
 export type Poller = { id: string; name: string; cls: SourceClass; interval_min: number };
 export const POLLERS: Poller[] = [
-  { id: "ghadv", name: "GitHub Advisory Database (REST)", cls: "near_realtime", interval_min: 5 },
-  { id: "rss", name: `Fast feeds (${FEEDS.filter((f) => f.cadence === "fast" && collectable(f.id)).length})`, cls: "near_realtime", interval_min: 5 },
-  { id: "kev", name: "CISA Known Exploited Vulnerabilities", cls: "periodic", interval_min: 10 },
+  { id: "ghadv", name: "GitHub Advisory Database (REST)", cls: "near_realtime", interval_min: 30 },
+  { id: "rss", name: `Fast feeds (${FEEDS.filter((f) => f.cadence === "fast" && collectable(f.id)).length})`, cls: "near_realtime", interval_min: 30 },
+  { id: "kev", name: "CISA Known Exploited Vulnerabilities", cls: "periodic", interval_min: 30 },
   { id: "rss-slow", name: `Slow feeds (${FEEDS.filter((f) => f.cadence === "slow" && collectable(f.id)).length})`, cls: "periodic", interval_min: 60 },
   { id: "nvd", name: "NVD CVE API 2.0 (software / AI-relevant CVEs)", cls: "periodic", interval_min: 120 }, // NVD asks automated lastMod polling to run no more than once every two hours
   { id: "osv", name: "OSV.dev, queried with your installed package versions", cls: "periodic", interval_min: 60 },
 ];
-export const TICK_MIN = 5;
+// Every 30 minutes, not 5: the 5-minute tick used up the Upstash Redis free tier (500,000 commands a month) in 27 days.
+export const TICK_MIN = 30;
 
 export type PollState = {
   last_run: string; last_ok: string | null; first_ok: string | null; cursor: string | null; etag?: string | null;
@@ -172,7 +173,7 @@ export async function runSource(id: string): Promise<{ ok: boolean; source: stri
 
 export type TickState = { last_run: string; ran: string[]; forced?: boolean; scheduled_runs?: number; last_scheduled?: string | null };
 
-/** The 5-minute tick: run each poller whose interval has elapsed (with 1 minute of slack for scheduler jitter).
+/** The scheduler tick (every TICK_MIN minutes): run each poller whose interval has elapsed (with 1 minute of slack for scheduler jitter).
  *  `scheduled` marks a run that came from the QStash tick schedule itself (not a forced call, not a legacy schedule hit),
  *  so /api/status can say whether that schedule has ever fired. */
 export async function tick(force = false, scheduled = false): Promise<{ ran: string[]; skipped: string[]; results: Awaited<ReturnType<typeof runSource>>[] }> {
@@ -184,6 +185,9 @@ export async function tick(force = false, scheduled = false): Promise<{ ran: str
     ran.push(p.id);
     results.push(await runSource(p.id));
   }
+  // Nothing due (e.g. the backup heartbeat arriving soon after a scheduled tick): write nothing, so idle ticks cost
+  // only the reads above. The caller skips its log line too.
+  if (!ran.length && !scheduled) return { ran, skipped, results };
   const prev = (await store.getPollState<TickState>("tick")) ?? null;
   const now = new Date().toISOString();
   await store.setPollState("tick", { last_run: now, ran, forced: force, scheduled_runs: (prev?.scheduled_runs ?? 0) + (scheduled ? 1 : 0), last_scheduled: scheduled ? now : prev?.last_scheduled ?? null });

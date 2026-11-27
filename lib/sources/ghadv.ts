@@ -1,4 +1,4 @@
-// GitHub Advisory Database REST (polled every 5 min; official). Complements the App webhook: catches
+// GitHub Advisory Database REST (polled every 30 min; official). Complements the App webhook: catches
 // deliveries the webhook missed, backfills, and carries severity + CVSS. Same item shape as the webhook source.
 import { env } from "../env";
 import { extractIds, sha } from "../dedup";

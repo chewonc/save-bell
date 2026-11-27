@@ -1,4 +1,4 @@
-// Autonomous remediation windows: the driver. One "run" per schedule occurrence. The 5-minute scheduler tick
+// Autonomous remediation windows: the driver. One "run" per schedule occurrence. The 30-minute scheduler tick
 // (app/api/poll/tick) calls startDueRuns() and stepRun() for every active run; each step does a bounded amount of work.
 //
 // What a step may do, by authorization level (lib/window-schedule.ts):

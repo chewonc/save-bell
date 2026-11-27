@@ -4,7 +4,7 @@
 name: heartbeat
 on:
   schedule:
-    - cron: "7,22,37,52 * * * *" # every 15 min, off the top of the hour to avoid peak delays
+    - cron: "7 * * * *" # hourly backup for the 30-minute QStash tick, off the top of the hour to avoid peak delays
   workflow_dispatch:
 permissions:
   contents: read

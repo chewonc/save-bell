@@ -56,7 +56,7 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
 
       <section className="grid gap-2" aria-labelledby="items">
         <h2 id="items" className="text-[calc(17px*var(--ui))] font-semibold">{active ? "Progress" : "Findings"}</h2>
-        {run.items.length === 0 ? <p className="text-[calc(14px*var(--ui))] text-ink2">{active ? "Nothing has started yet. Work begins on the next scheduler tick (about every 5 minutes) or when you choose Check now." : "No eligible findings were found in this window."}</p> : (
+        {run.items.length === 0 ? <p className="text-[calc(14px*var(--ui))] text-ink2">{active ? "Nothing has started yet. Work begins on the next scheduler tick (about every 30 minutes) or when you choose Check now." : "No eligible findings were found in this window."}</p> : (
           <ul className="border hair rounded-[10px] overflow-hidden">
             {run.items.map((i) => {
               const f = i.fix_id ? fixes.get(i.fix_id) : null;
