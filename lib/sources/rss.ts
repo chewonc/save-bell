@@ -7,7 +7,7 @@ import { USER_AGENT } from "../ua";
 import { titleOnly } from "./terms";
 import { arxivFetch, isArxivUrl } from "./arxiv-limit";
 
-// cadence: "fast" feeds are fetched on every 5-minute tick (near-real-time); "slow" feeds hourly (periodic), matching how often they actually publish.
+// cadence: "fast" feeds are fetched on every 30-minute tick (near-real-time); "slow" feeds hourly (periodic), matching how often they actually publish.
 // demo: the feed's terms permit personal/non-commercial use only; items are labelled low-trust and the feed is listed as demo-only.
 // format: "rss" (default) is RSS/Atom XML; "hn_algolia" is the Hacker News Algolia JSON search API (hnrss.org, the
 // previous source, failed about half of all polls with 502/timeouts on Nov 1 2026; Algolia answered every probe in <1.5 s).

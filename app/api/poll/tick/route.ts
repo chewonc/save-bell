@@ -1,4 +1,4 @@
-// The single scheduler entry point: QStash calls this every 5 minutes (`*/5 * * * *`); the GitHub Actions heartbeat
+// The single scheduler entry point: QStash calls this every 30 minutes (`*/30 * * * *`); the GitHub Actions heartbeat
 // calls it as a backup. Each source runs on its own interval (lib/poll.ts POLLERS). `?force=1` runs everything.
 import { verifySignatureAppRouter } from "@upstash/qstash/nextjs";
 import { isAdminAuth, hasQStash } from "@/lib/env";
@@ -14,7 +14,7 @@ async function handler(req: Request) {
   // A QStash-delivered call carries upstash-schedule-id; that is the only evidence the tick schedule itself fired.
   const scheduled = !!req.headers.get("upstash-schedule-id");
   const r = await tick(force, scheduled);
-  await store.log({ kind: "poll", source: "tick", detail: `${scheduled ? "scheduled" : force ? "forced" : "manual"} tick: ran ${r.ran.join(", ") || "nothing due"}` });
+  if (r.ran.length || scheduled) await store.log({ kind: "poll", source: "tick", detail: `${scheduled ? "scheduled" : force ? "forced" : "manual"} tick: ran ${r.ran.join(", ") || "nothing due"}` });
   // Autonomous remediation windows ride the same schedule; a failure here never fails source polling.
   const windows = await windowsTick(windowDeps()).catch((e) => ({ opened: [], stepped: [], error: String((e as Error).message ?? e).slice(0, 200) }));
   return Response.json({ ok: r.results.every((x) => x.ok), ...r, windows });

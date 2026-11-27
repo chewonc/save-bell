@@ -1,4 +1,4 @@
-// Called from the 5-minute scheduler tick (app/api/poll/tick, QStash plus the GitHub Actions heartbeat backup): open
+// Called from the 30-minute scheduler tick (app/api/poll/tick, QStash plus the GitHub Actions heartbeat backup): open
 // remediation windows whose occurrence has started, then advance every active run by one bounded step. A deadline
 // is enforced on the next tick after it passes (at most about 5 minutes late), and the runner margin (20 minutes)
 // keeps new test jobs from starting close to the end.

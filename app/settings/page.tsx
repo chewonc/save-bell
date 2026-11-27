@@ -85,7 +85,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
             <li>Check issues and Prepare fixes never write to your repositories. Each fix waits for your approval.</li>
             <li>Create draft PRs needs your authorization for each run. GitHub write access and passing tests are re-checked before every PR. PRs are never merged.</li>
             <li>Issue count, fixes at once, spending limit and end time are enforced on the server.</li>
-            <li>Runs start and stop on the scheduler, about every 5 minutes.</li>
+            <li>Runs start and stop on the scheduler, about every 30 minutes.</li>
           </ul></More>
         </Section>
 

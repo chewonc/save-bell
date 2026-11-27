@@ -1,6 +1,6 @@
 // GET  -> one remediation-window run (owner only), for the live run page.
 // POST {action: "pause"|"resume"|"cancel"|"step"} -> user controls. "step" runs one bounded step now (same limits,
-// same per-minute claim as the scheduler tick), so a run can be advanced without waiting for the next 5-minute tick.
+// same per-minute claim as the scheduler tick), so a run can be advanced without waiting for the next 30-minute tick.
 import { currentUser } from "@/lib/session";
 import { store } from "@/lib/store";
 import { windowDeps } from "@/lib/window-deps";
