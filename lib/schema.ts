@@ -191,6 +191,9 @@ export const UserSettings = z.object({
   // Shared demo repositories (admin-registered, public code): shown unless hidden; their alerts are opt-in.
   hide_demo: z.boolean().default(false),
   demo_alerts: z.boolean().default(false),
+  // AI execution (Settings): "none" (default, also when absent) = SaveBell accepts no AI-made fixes; "agent" = fix proposals from the
+  // user's own coding agent over MCP are accepted for review. SaveBell itself never runs AI.
+  ai_mode: z.enum(["none", "agent"]).optional(), // absent = "none"
 });
 export const User = z.object({
   id: z.string(), // "gh:<github numeric id>" or "system"
@@ -315,7 +318,7 @@ export const Fix = z.object({
     action: z.enum(["pr", "branch", "pr_then_merge"]), branch: z.string(), base_branch: z.string(),
     issued_at: z.string(), expires_at: z.string(), merge_expires_at: z.string().nullable(), revoked_at: z.string().nullable(),
   }).nullable().default(null),
-  agent: z.enum(["muse-spark", "muse-code", "runner"]).default("muse-spark"), // who produced fix.files ("runner" = the fix runner in the user's GitHub Actions)
+  agent: z.enum(["muse-spark", "muse-code", "runner", "user-agent"]).default("muse-spark"), // who produced fix.files ("runner" = the fix runner in the user's GitHub Actions; "user-agent" = the user's coding agent over MCP)
   allowed_files: z.array(z.string()).default([]), // the only paths the runner may change (enforced server-side on the result)
   nonce_hash: z.string().nullable().default(null), // single-use runner credential (sha256), cleared once consumed
   events: z.array(z.object({ at: z.string(), actor: z.string(), action: z.string(), detail: z.string(), url: z.string().nullable().default(null) })).default([]),
