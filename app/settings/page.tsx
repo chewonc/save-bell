@@ -2,6 +2,8 @@
 // GitHub access is managed per installation under Repositories, so there is no separate Account section.)
 import { RUNS_PER_DAY } from "@/lib/run-limit";
 import { ConnectAgent } from "@/components/connect-agent";
+import { StaticScan } from "@/components/static-scan";
+import { scanStore } from "@/lib/scan";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { PushToggle } from "@/components/push-toggle";
 import { listAgentTokens } from "@/lib/agent-token";
@@ -35,7 +37,12 @@ export default async function Settings({ searchParams }: { searchParams: Promise
   const user = await requireUser("/settings");
   const sp = await searchParams;
   const locale = await getLocale();
-  const [d, langs, subs, tokens] = await Promise.all([getDict(locale), languages(locale), store.listPush(user.id), listAgentTokens(user.id)]);
+  const [d, langs, subs, tokens, myRepos] = await Promise.all([getDict(locale), languages(locale), store.listPush(user.id), listAgentTokens(user.id), store.listUserRepos(user.id)]);
+  const scanRepos = await Promise.all(myRepos.filter((r) => r.installation_id && !r.access_lost).map(async (r) => {
+    const id = await scanStore.latestId(user.id, r.repo_key);
+    const s = id ? await scanStore.get(id) : null;
+    return { key: r.repo_key, scan: s ? { id: s.id, repo: s.repo, base_sha: s.base_sha, status: s.status, created_at: s.created_at, finished_at: s.finished_at, run_url: s.run_url, matches: s.matches, dropped: s.dropped, error: s.error } : null };
+  }));
   const masked = user.settings.webhook_url ? `${user.settings.webhook_url.slice(0, 28)}…` : "";
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "never");
   return (
@@ -44,6 +51,17 @@ export default async function Settings({ searchParams }: { searchParams: Promise
       <div>
         <Section id="repositories" title="Repositories" desc="Which repositories SaveBell monitors.">
           <RepositoriesPanel sp={sp} embedded />
+        </Section>
+
+        <Section id="static-scan" title="Static scan" desc="Looks for risky code patterns with SaveBell&apos;s own rules. No AI.">
+          <StaticScan repos={scanRepos} />
+          <More label="How it works"><ul className="list-disc pl-5 grid gap-1">
+            <li>Runs in your repository&apos;s GitHub Actions with the same savebell.yml as Auto Fix. It only reads your code and never changes it.</li>
+            <li>Checks for code run with eval, shell commands and SQL queries built from variables, and CORS that lets any site use your cookies (JavaScript, TypeScript and Python).</li>
+            <li>Every result is a <b>Possible issue</b>: the pattern can be unsafe, but your code may already check the input elsewhere. SaveBell never marks it confirmed.</li>
+            <li>SaveBell re-reads each reported line itself and shows its own explanation. Each scan counts toward the daily limit of {RUNS_PER_DAY} runs.</li>
+            <li>Vulnerable package versions are already checked without a scan, from your lockfiles.</li>
+          </ul></More>
         </Section>
 
         <Section id="connect-agent" title="Connect AI agent" desc="Connect your coding agent via MCP.">
