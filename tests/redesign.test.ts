@@ -82,8 +82,8 @@ test("MCP: initialize, tools/list, notifications, unknown methods", async () => 
   assert.ok(init.result.capabilities.tools);
   assert.equal(await handleRpc({ jsonrpc: "2.0", method: "notifications/initialized" }, ctx), null);
   const list = (await handleRpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }, ctx)) as { result: { tools: { name: string; annotations: { readOnlyHint: boolean } }[] } };
-  assert.deepEqual(list.result.tools.map((t) => t.name), ["list_findings", "get_finding", "get_file_context", "report_result"]);
-  assert.ok(list.result.tools.filter((t) => t.name !== "report_result").every((t) => t.annotations.readOnlyHint));
+  assert.deepEqual(list.result.tools.map((t) => t.name), ["list_findings", "get_finding", "get_file_context", "report_result", "submit_fix_proposal"]);
+  assert.ok(list.result.tools.filter((t) => t.name !== "report_result" && t.name !== "submit_fix_proposal").every((t) => t.annotations.readOnlyHint));
   const bad = (await handleRpc({ jsonrpc: "2.0", id: 3, method: "nope" }, ctx)) as { error: { code: number } };
   assert.equal(bad.error.code, -32601);
 });
@@ -148,7 +148,7 @@ test("MCP route: 401 without or with a bad token, 403 for a foreign browser orig
   assert.equal((await POST(new Request("http://x/api/mcp", { method: "POST", body, headers: { authorization: `Bearer ${t}`, origin: "https://evil.example" } }))).status, 403);
   const ok = await POST(new Request("http://x/api/mcp", { method: "POST", body, headers: { authorization: `Bearer ${t}` } }));
   assert.equal(ok.status, 200);
-  assert.equal(((await ok.json()) as { result: { tools: unknown[] } }).result.tools.length, 4);
+  assert.equal(((await ok.json()) as { result: { tools: unknown[] } }).result.tools.length, 5);
   assert.equal((await GET()).status, 405);
 });
 

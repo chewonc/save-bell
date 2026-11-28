@@ -22,6 +22,16 @@ export async function saveRemediationMode(formData: FormData) {
   revalidatePath("/settings");
 }
 
+/** AI execution: whether fix proposals from the user's own coding agent are accepted. Only a known value is stored. */
+export async function saveAiMode(formData: FormData) {
+  const user = await requireUser("/settings");
+  const v = String(formData.get("ai_mode") ?? "");
+  if (v !== "none" && v !== "agent") return;
+  await store.putUser({ ...user, settings: { ...user.settings, ai_mode: v } });
+  await store.log({ kind: "fix", source: "settings", detail: `${user.login} set AI execution to ${v}`, ref: user.id }).catch(() => {});
+  revalidatePath("/settings");
+}
+
 /** Shared demo repositories: show/hide and opt-in alerts (per user). */
 export async function saveDemoPrefs(formData: FormData) {
   const user = await requireUser("/settings");

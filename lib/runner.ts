@@ -235,8 +235,9 @@ export async function approveValidated(fix: Fix, a: Assessment, f: Finding | nul
   await store.putFix(next);
   const tests = fix.runner?.tests ?? null;
   try {
-    const testsNote = tests?.executed ? `Repository tests executed in an isolated GitHub Actions runner: \`${tests.command}\` exited 0.` : "No test command was detected, so no tests were executed. Checks performed: syntax parse and static remediation assessment only.";
-    const applied = await applyFix(next, a, f, installationId, { draft: opts.mode !== "push", openPr: opts.mode !== "branch", author: `SaveBell fix runner in your GitHub Actions (${next.runner?.agent ?? "rules"})`, testsNote }); // PR mode: a draft; push mode needs a mergeable PR
+    const byAgent = fix.agent === "user-agent";
+    const testsNote = byAgent ? "Proposed by the repository owner's own coding agent. SaveBell did not run tests for this change. Checks performed: syntax parse and static remediation assessment only." : tests?.executed ? `Repository tests executed in an isolated GitHub Actions runner: \`${tests.command}\` exited 0.` : "No test command was detected, so no tests were executed. Checks performed: syntax parse and static remediation assessment only.";
+    const applied = await applyFix(next, a, f, installationId, { draft: opts.mode !== "push", openPr: opts.mode !== "branch", author: byAgent ? `your coding agent (${fix.model}), submitted through SaveBell` : `SaveBell fix runner in your GitHub Actions (${next.runner?.agent ?? "rules"})`, testsNote }); // PR mode: a draft; push mode needs a mergeable PR
     const keep = { events: next.events, runner: next.runner, mode: next.mode, agent: next.agent, allowed_files: next.allowed_files, patch_version: next.patch_version };
     if (applied.status === "branch_pushed") {
       next = event({ ...next, ...applied, ...keep }, "argus", "branch_pushed", `pushed ${applied.branch} (no pull request)`, applied.commit_url);

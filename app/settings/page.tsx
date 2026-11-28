@@ -13,7 +13,7 @@ import { store } from "@/lib/store";
 import { REMEDIATION_MODES, modeOf } from "@/lib/remediation-mode";
 import { RemediationWindows } from "@/components/remediation-windows";
 import { RepositoriesPanel } from "../repos/panel";
-import { createAgentTokenAction, revokeAgentTokenAction, saveDemoPrefs, saveRemediationMode, saveSettings } from "./actions";
+import { createAgentTokenAction, revokeAgentTokenAction, saveAiMode, saveDemoPrefs, saveRemediationMode, saveSettings } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +59,22 @@ export default async function Settings({ searchParams }: { searchParams: Promise
             </ul>
           )}
           <More><p>Works with Claude Code, Codex, Meta Muse Code or any MCP-capable agent, using your own AI plan. Through MCP your agent can read alerts and the cited code and report what it finds; SaveBell re-checks every line it cites. It cannot push code: changes stay in your editor until you approve them there. The connection key is shown once and can be revoked here with Disconnect.</p></More>
+        </Section>
+
+        <Section id="ai-execution" title="AI execution" desc="Whether AI-made fixes are accepted. SaveBell never runs AI on its own servers.">
+          <form action={saveAiMode} className="grid gap-2 text-[calc(14px*var(--ui))]">
+            <fieldset className="grid gap-2"><legend className="sr-only">AI execution</legend>
+              <label className="flex items-start gap-2"><input type="radio" name="ai_mode" value="none" defaultChecked={user.settings.ai_mode !== "agent"} className="mt-1" /><span><b>No AI</b> (default)<span className="block text-[calc(13px*var(--ui))] text-ink2">Fixes are dependency upgrades computed by rules. No AI is used and no AI cost.</span></span></label>
+              <label className="flex items-start gap-2"><input type="radio" name="ai_mode" value="agent" defaultChecked={user.settings.ai_mode === "agent"} className="mt-1" /><span><b>My coding agent</b><span className="block text-[calc(13px*var(--ui))] text-ink2">Your agent (connected above) can send code fixes with submit_fix_proposal. It runs on your computer with your own AI plan.</span></span></label>
+            </fieldset>
+            <div><button type="submit" className="btn">Save</button></div>
+          </form>
+          <More label="How it works"><ul className="list-disc pl-5 grid gap-1">
+            <li>Your agent sends the full new content of up to 5 existing files. Workflows, secrets, keys and lockfiles cannot be changed.</li>
+            <li>SaveBell checks the files, parses them and runs its static check. Your tests are not run by SaveBell.</li>
+            <li>Nothing is written to your repository until you review and approve the exact patch. Then SaveBell opens a draft PR.</li>
+            <li>Each proposal counts toward the daily limit of {RUNS_PER_DAY} fix runs.</li>
+          </ul></More>
         </Section>
 
         <Section id="remediation" title="Automatic remediation">
