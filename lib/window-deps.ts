@@ -1,6 +1,7 @@
 // Production wiring for the remediation-window driver (lib/window-run.ts). Every step reuses an existing module:
 // re-verification (lib/reverify.ts), fix drafting (lib/fix.ts), the isolated runner in preview mode (lib/runner.ts),
 // cancellation (lib/remediation-control.ts) and notifications. Nothing here writes to a repository.
+import { RUN_LIMIT_MESSAGE, takeRunSlot } from "./run-limit";
 import { createHash } from "node:crypto";
 import { fixesFor, withAgentFor } from "./authz";
 import { env, hasGitHubApp, hasPush, hasRunner } from "./env";
@@ -95,6 +96,7 @@ export const windowDeps = (): Deps => ({
     // The runner lives in the user's own GitHub Actions: without the caller workflow nothing would run.
     const setup = await runnerSetup(fix.repo, w?.default_branch ?? "main");
     if (!setup.installed) throw new Error(`the SaveBell runner workflow is not set up in ${fix.repo} (${setup.path})`);
+    if (!(await takeRunSlot(fix.user_id))) throw new Error(RUN_LIMIT_MESSAGE);
     if (!(await store.claim(`run:${fix.id}:${fix.events.length}:${fix.status}`, APPROVAL_CLAIM_TTL_S))) throw new Error("this fix is already starting");
     // Preview mode: the runner reads the repository in the user's Actions and the patch waits for the user's approval. No repository write is authorized.
     await startRun({ ...fix, window_run_id: runId }, a, "preview", ACTOR, inst);

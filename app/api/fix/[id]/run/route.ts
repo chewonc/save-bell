@@ -9,6 +9,7 @@ import { destinationOf, modeOf, needsWrite, type RemediationMode } from "@/lib/r
 import { allowedFilesFor, detectTestCommand, RunnerError, runnerSetup, startRun, type RunnerSetup } from "@/lib/runner";
 import { currentUser, githubUserToken, isSystemRepo } from "@/lib/session";
 import { store, APPROVAL_CLAIM_TTL_S } from "@/lib/store";
+import { RUN_LIMIT_MESSAGE, takeRunSlot } from "@/lib/run-limit";
 
 export const maxDuration = 60;
 
@@ -73,6 +74,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const setup = inst && hasRunner() ? await runnerSetup(fix.repo, w?.default_branch ?? "main") : null;
     const blockers = await runBlockers(fix.repo_key, fix.repo, ur, inst, mode, setup);
     if (blockers.length || !inst) throw new RunnerError(blockers[0] ?? "no installation", 403);
+    // Daily per-user limit, checked last so a blocked or invalid request never uses up a run.
+    if (!(await takeRunSlot(user.id))) throw new RunnerError(RUN_LIMIT_MESSAGE, 429);
     // The runner never writes; the stored mode only records the destination the user saw when starting it.
     // One run per attempt state: a double click or two tabs cannot dispatch two runners for the same fix.
     if (!(await store.claim(`run:${fix.id}:${fix.events.length}:${fix.status}`, APPROVAL_CLAIM_TTL_S))) throw new RunnerError("this fix is already starting", 409);

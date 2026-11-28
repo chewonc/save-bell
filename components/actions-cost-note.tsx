@@ -1,4 +1,5 @@
 "use client";
+import { RUNS_PER_DAY } from "@/lib/run-limit-const";
 import { useState } from "react";
 // Who pays for a fix run, and roughly how much, shown before the one-time setup and before each run is approved.
 // The runner uses the repository owner's GitHub Actions minutes (and their own AI provider, if they connect one), so
@@ -91,7 +92,7 @@ export function ActionsCostNote({ compact = false, repo }: { compact?: boolean; 
             <tr><td className="pr-3 align-top">AI, your own model or agent</td><td className="align-top">About $0.01–$5, billed by your AI provider</td></tr>
           </tbody>
         </table>
-        <p><b>To avoid surprise charges:</b> runs start only when you approve. Keep the Actions spending limit at $0 in {billing}, and set a limit with your AI provider.</p>
+        <p><b>To avoid surprise charges:</b> runs start only when you approve, up to {RUNS_PER_DAY} runs per person per day. Keep the Actions spending limit at $0 in {billing}, and set a limit with your AI provider.</p>
         {repo && <CostCheck repo={repo} />}
       </div>
     </details>

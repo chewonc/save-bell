@@ -1,5 +1,6 @@
 // Settings: repositories, AI agent connection, remediation, notifications, language. (Sign-out is in the user menu;
 // GitHub access is managed per installation under Repositories, so there is no separate Account section.)
+import { RUNS_PER_DAY } from "@/lib/run-limit";
 import { ConnectAgent } from "@/components/connect-agent";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { PushToggle } from "@/components/push-toggle";
@@ -86,6 +87,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
             <li>Create draft PRs needs your authorization for each run. GitHub write access and passing tests are re-checked before every PR. PRs are never merged.</li>
             <li>Issue count, fixes at once, spending limit and end time are enforced on the server.</li>
             <li>Runs start and stop on the scheduler, about every 30 minutes.</li>
+            <li>Up to {RUNS_PER_DAY} Auto Fix runs per person per day (resets at 00:00 UTC), counted across all your repositories.</li>
           </ul></More>
         </Section>
 
