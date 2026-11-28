@@ -1,0 +1,109 @@
+# SaveBell static rule pack (Apache-2.0). Run by the SaveBell runner in the repository owner's own GitHub Actions with
+# the Semgrep OSS engine; no Semgrep registry rules are used. Every result is shown as a "Possible issue": a pattern in
+# the code that can be unsafe, never a confirmed vulnerability (input may be validated elsewhere).
+# Each rule id must also be listed in lib/scan-rules.ts, which holds the text SaveBell shows; unknown ids are dropped.
+rules:
+  - id: savebell.js-eval
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: Code built at runtime is executed with eval or new Function.
+    metadata: { cwe: "CWE-95" }
+    patterns:
+      - pattern-either:
+          - pattern: eval($X)
+          - pattern: new Function(..., $X)
+          - pattern: Function(..., $X)
+      - pattern-not: eval("...")
+      - pattern-not: new Function(..., "...")
+      - pattern-not: Function(..., "...")
+
+  - id: savebell.js-shell-exec
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: A shell command is built from a variable and run with child_process.
+    metadata: { cwe: "CWE-78" }
+    patterns:
+      - pattern-either:
+          - pattern: $CP.exec($CMD, ...)
+          - pattern: $CP.execSync($CMD, ...)
+          - pattern: exec($CMD, ...)
+          - pattern: execSync($CMD, ...)
+      - pattern-not: $CP.exec("...", ...)
+      - pattern-not: $CP.execSync("...", ...)
+      - pattern-not: exec("...", ...)
+      - pattern-not: execSync("...", ...)
+      - pattern-not: $RE.exec(...)
+      - metavariable-pattern:
+          metavariable: $CMD
+          pattern-either:
+            - pattern: '`...${...}...`'
+            - pattern: '"..." + $Y'
+            - pattern: $Y + "..."
+
+  - id: savebell.js-sql-concat
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: An SQL query is built by joining strings with a variable instead of using parameters.
+    metadata: { cwe: "CWE-89" }
+    patterns:
+      - pattern-either:
+          - pattern: $DB.query($Q, ...)
+          - pattern: $DB.execute($Q, ...)
+          - pattern: $DB.raw($Q, ...)
+          - pattern: $DB.$queryRawUnsafe($Q, ...)
+          - pattern: $DB.$executeRawUnsafe($Q, ...)
+      - metavariable-pattern:
+          metavariable: $Q
+          pattern-either:
+            - pattern: '"$SQL" + $Y'
+            - pattern: '`$SQL${...}...`'
+      - metavariable-regex:
+          metavariable: $Q
+          regex: (?i)\b(select|insert|update|delete|where)\b
+
+  - id: savebell.js-cors-any-origin-credentials
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: CORS allows any origin while also allowing credentials (cookies).
+    metadata: { cwe: "CWE-942" }
+    pattern-either:
+      - pattern: 'cors({..., origin: "*", ..., credentials: true, ...})'
+      - pattern: 'cors({..., credentials: true, ..., origin: "*", ...})'
+      - pattern: 'cors({..., origin: true, ..., credentials: true, ...})'
+      - pattern: 'cors({..., credentials: true, ..., origin: true, ...})'
+
+  - id: savebell.py-eval
+    languages: [python]
+    severity: WARNING
+    message: Code built at runtime is executed with eval or exec.
+    metadata: { cwe: "CWE-95" }
+    patterns:
+      - pattern-either:
+          - pattern: eval($X, ...)
+          - pattern: exec($X, ...)
+      - pattern-not: eval("...", ...)
+      - pattern-not: exec("...", ...)
+
+  - id: savebell.py-shell-true
+    languages: [python]
+    severity: WARNING
+    message: A command is run through the shell (shell=True) with a value that is not a fixed string.
+    metadata: { cwe: "CWE-78" }
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.$F($CMD, ..., shell=True, ...)
+          - pattern: os.system($CMD)
+      - pattern-not: subprocess.$F("...", ..., shell=True, ...)
+      - pattern-not: os.system("...")
+
+  - id: savebell.py-sql-format
+    languages: [python]
+    severity: WARNING
+    message: An SQL query is built with string formatting instead of query parameters.
+    metadata: { cwe: "CWE-89" }
+    patterns:
+      - pattern-either:
+          - pattern: $C.execute(f"...", ...)
+          - pattern: $C.execute("..." % $X, ...)
+          - pattern: $C.execute("...".format(...), ...)
+          - pattern: $C.execute("..." + $X, ...)

@@ -102,3 +102,21 @@ export function agentFor(brief, env) {
   if (approved !== "rules") throw new Error(`executor "${approved}" is not supported by this runner`);
   return { kind: "rules", label: "rules", ignored: requested && requested !== "rules" ? `SAVEBELL_AGENT=${requested} was ignored: AI was not approved for this run` : null };
 }
+
+/** Semgrep JSON -> [{rule_id, path, line}] (at most 100), paths relative to the repository root. Messages and code
+ *  snippets are not sent: SaveBell shows its own rule text and re-reads each cited line itself. */
+export function parseSemgrep(stdout, repoDir) {
+  let j; try { j = JSON.parse(stdout || "{}"); } catch { return []; }
+  const root = String(repoDir).replace(/\\/g, "/").replace(/\/$/, "") + "/";
+  const out = [];
+  for (const r of j.results ?? []) {
+    const rule = String(r.check_id ?? "").replace(/^.*?(savebell\.)/, "$1");
+    let path = String(r.path ?? "").replace(/\\/g, "/");
+    if (path.startsWith(root)) path = path.slice(root.length);
+    const line = Number(r.start?.line);
+    if (!rule.startsWith("savebell.") || !path || !Number.isInteger(line) || line < 1) continue;
+    out.push({ rule_id: rule, path, line });
+    if (out.length >= 100) break;
+  }
+  return out;
+}
